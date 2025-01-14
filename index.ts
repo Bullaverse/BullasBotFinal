@@ -638,169 +638,97 @@ if (interaction.commandName === "wankme") {
     ephemeral: true,
   });
 }
-// -------------------------------------------------------
-// /alreadywanked (admin)
-// -------------------------------------------------------
 if (interaction.commandName === "alreadywanked") {
   if (!hasAdminRole(interaction.member)) {
-    await interaction.reply({
-      content: "You don't have permission to use this command.",
-      ephemeral: true,
-    });
-    return;
+      await interaction.reply({
+          content: "You don't have permission to use this command.",
+          ephemeral: true,
+      });
+      return;
   }
 
   await interaction.deferReply();
 
   try {
-    // 1. Get total count of users who have a non-null address (or remove this if not needed)
-    const { count: totalCount } = await supabase
-      .from("users")
-      .select("*", { count: "exact" })
-      .not("address", "is", null);
-
-    if (typeof totalCount !== "number") {
-      throw new Error("Could not get total user count from Supabase.");
-    }
-
-    // 2. Fetch all relevant users (in pages of BATCH_SIZE)
-    let allVerifiedUsers = [];
-    const BATCH_SIZE = 1000;
-    let from = 0;
-    let to = BATCH_SIZE - 1;
-
-    while (true) {
-      const { data: batchData, error } = await supabase
-        .from("users")
-        .select("discord_id")
-        .not("address", "is", null) 
-        .order("created_at", { ascending: true })
-        .range(from, to);
-
-      if (error) {
-        throw error;
+      const guild = interaction.guild;
+      if (!guild) {
+          await interaction.editReply("Failed to find guild.");
+          return;
       }
 
-      if (!batchData || batchData.length === 0) {
-        break; // no more rows
+      const newRole = guild.roles.cache.get(NEW_WANKME_ROLE_ID);
+      if (!newRole) {
+          await interaction.editReply("Failed to find the new role.");
+          return;
       }
 
-      allVerifiedUsers = allVerifiedUsers.concat(batchData);
+      let addedCount = 0;
+      let existingCount = 0;
+      let errorCount = 0;
 
-      if (batchData.length < BATCH_SIZE) {
-        break; // last page
+      // Fetch members with Bull role
+      const bullRole = guild.roles.cache.get(BULL_ROLE_ID);
+      const bearRole = guild.roles.cache.get(BEAR_ROLE_ID);
+
+      if (!bullRole || !bearRole) {
+          await interaction.editReply("Failed to find Bull or Bear roles.");
+          return;
       }
 
-      from += BATCH_SIZE;
-      to += BATCH_SIZE;
-    }
+      // Get all members with either role
+      const allMembers = [...bullRole.members.values(), ...bearRole.members.values()];
+      const uniqueMembers = [...new Set(allMembers)]; // Remove duplicates if any
 
-    // 3. Set up guild & role
-    const guild = interaction.guild;
-    if (!guild) {
-      await interaction.editReply("Failed to find guild.");
-      return;
-    }
+      const totalMembers = uniqueMembers.length;
 
-    const newRole = guild.roles.cache.get(NEW_WANKME_ROLE_ID);
-    if (!newRole) {
-      await interaction.editReply("Failed to find the new role.");
-      return;
-    }
+      // Process in batches
+      const BATCH_SIZE = 200;
+      const totalBatches = Math.ceil(totalMembers / BATCH_SIZE);
 
-    let addedCount = 0;
-    let existingCount = 0;
-    let skippedCount = 0; // If they don't have Bull or Bear, we'll skip them
-    let errorCount = 0;
-    let processedCount = 0;
+      for (let i = 0; i < uniqueMembers.length; i += BATCH_SIZE) {
+          const batch = uniqueMembers.slice(i, i + BATCH_SIZE);
+          const currentBatch = Math.floor(i / BATCH_SIZE) + 1;
 
-    // 4. Process in smaller sub-batches to avoid rate limits
-    const PROCESS_BATCH_SIZE = 100;
-    const totalBatches = Math.ceil(allVerifiedUsers.length / PROCESS_BATCH_SIZE);
-    let currentBatch = 0;
+          await interaction.editReply({
+              content: `Processing Batch ${currentBatch}/${totalBatches}\n` +
+                      `Progress: ${i + batch.length}/${totalMembers}\n` +
+                      `Added: ${addedCount} | Existing: ${existingCount} | Errors: ${errorCount}`
+          });
 
-    for (let i = 0; i < allVerifiedUsers.length; i += PROCESS_BATCH_SIZE) {
-      currentBatch++;
-      const subBatch = allVerifiedUsers.slice(i, i + PROCESS_BATCH_SIZE);
-      processedCount += subBatch.length;
-
-      // Update reply with progress
-      await interaction.editReply({
-        content:
-          `Processing Batch ${currentBatch}/${totalBatches}\n` +
-          `Users (this chunk): ${processedCount}/${allVerifiedUsers.length}\n` +
-          `Added: ${addedCount} | Existing: ${existingCount} | Skipped: ${skippedCount} | Errors: ${errorCount}\n\n` +
-          `Total Progress: ${processedCount}/${totalCount} verified users`,
-      });
-
-      // 5. For each user in sub-batch, try to add role
-      for (const user of subBatch) {
-        try {
-          if (!user.discord_id) {
-            errorCount++;
-            continue;
-          }
-
-          const member = await guild.members
-            .fetch(user.discord_id)
-            .catch(() => null);
-
-          if (member) {
-            // **Check if user has Bull or Bear before anything else**
-            if (
-              member.roles.cache.has(BULL_ROLE_ID) ||
-              member.roles.cache.has(BEAR_ROLE_ID)
-            ) {
-              // Then check if they already have the new role
-              if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
-                // Add the new role
-                await member.roles.add(newRole);
-                addedCount++;
-              } else {
-                existingCount++;
+          for (const member of batch) {
+              try {
+                  if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+                      await member.roles.add(newRole);
+                      addedCount++;
+                  } else {
+                      existingCount++;
+                  }
+              } catch (err) {
+                  console.error(`Error processing member ${member.user.tag}:`, err);
+                  errorCount++;
               }
-            } else {
-              // They don't have bull or bear, so skip them
-              skippedCount++;
-            }
-          } else {
-            // Could not fetch user or they're not in the guild
-            errorCount++;
           }
-        } catch (err) {
-          console.error(`Error processing user ${user.discord_id}:`, err);
-          errorCount++;
-        }
+
+          // Add delay between batches
+          await new Promise(resolve => setTimeout(resolve, 2000));
       }
 
-      // Add delay between sub-batches to avoid potential rate limits
-      await new Promise((resolve) => setTimeout(resolve, 2000));
-    }
+      const resultEmbed = new EmbedBuilder()
+          .setColor(0x0099ff)
+          .setTitle("Already Wanked Role Assignment Complete")
+          .setDescription(
+              `**Final Results:**\n\n` +
+              `• ${addedCount} users received the new role\n` +
+              `• ${existingCount} users already had the role\n` +
+              `• ${errorCount} errors encountered\n\n` +
+              `Total members processed: ${totalMembers}\n` +
+              `Success rate: ${((addedCount + existingCount) / totalMembers * 100).toFixed(1)}%`
+          );
 
-    // 6. Final embed summary
-    const resultEmbed = new EmbedBuilder()
-      .setColor(0x0099ff)
-      .setTitle("Already Wanked Role Assignment Complete")
-      .setDescription(
-        `**Final Results:**\n\n` +
-          `• ${addedCount} users received the new role\n` +
-          `• ${existingCount} users already had the role\n` +
-          `• ${skippedCount} users did NOT have Bull or Bear roles (skipped)\n` +
-          `• ${errorCount} users were not accessible\n\n` +
-          `Total verified users processed: ${allVerifiedUsers.length}\n` +
-          `Overall Progress: ${processedCount}/${totalCount} total users\n` +
-          `Success rate: ${(
-            ((addedCount + existingCount) / allVerifiedUsers.length) *
-            100
-          ).toFixed(1)}%`
-      );
-
-    await interaction.editReply({ embeds: [resultEmbed] });
+      await interaction.editReply({ embeds: [resultEmbed] });
   } catch (err) {
-    console.error("Error in alreadywanked command:", err);
-    await interaction.editReply(
-      "An error occurred while assigning roles to verified users."
-    );
+      console.error("Error in alreadywanked command:", err);
+      await interaction.editReply("An error occurred while assigning roles to users.");
   }
 }
 
