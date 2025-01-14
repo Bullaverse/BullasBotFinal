@@ -433,6 +433,10 @@ const commands = [
         .setDescription("The amount to fine")
         .setRequired(true)
     ),
+    // WANKME
+new SlashCommandBuilder()
+.setName("wankme")
+.setDescription("Link your Discord account to your address"),
 
   // ====== 10) /updatewhitelistminimum (Admin only) ======
   new SlashCommandBuilder()
@@ -576,7 +580,61 @@ client.on("interactionCreate", async (interaction) => {
       await interaction.editReply("An error occurred while simulating role updates.");
     }
   }
+      // -------------------------------------------------------
+// /wankme
+// -------------------------------------------------------
+if (interaction.commandName === "wankme") {
+  const userId = interaction.user.id;
+  const uuid = v4();
 
+  // Check if user already has an account
+  const { data: userData } = await supabase
+    .from("users")
+    .select("*")
+    .eq("discord_id", userId)
+    .single();
+
+  if (userData) {
+    await interaction.reply({
+      content: `You have already linked your account. Your linked account: \`${maskAddress(userData.address)}\``,
+      ephemeral: true
+    });
+    return;
+  }
+
+  // Insert new token
+  const { error } = await supabase
+    .from("tokens")
+    .insert({ token: uuid, discord_id: userId, used: false })
+    .single();
+
+  if (error) {
+    console.error("Error inserting token:", error);
+    await interaction.reply({
+      content: "An error occurred while generating the token.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  // Generate verification link and assign role
+  const vercelUrl = `${process.env.VERCEL_URL}/game?token=${uuid}&discord=${userId}`;
+  
+  try {
+    const member = interaction.member as GuildMember;
+    const newRole = interaction.guild?.roles.cache.get(NEW_WANKME_ROLE_ID);
+    if (member && newRole && !member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+      await member.roles.add(newRole);
+    }
+  } catch (error) {
+    console.error("Error assigning new wankme role:", error);
+  }
+
+  await interaction.reply({
+    content: `Hey ${interaction.user.username}, to link your Discord account to your address click this link:\n\n${vercelUrl}`,
+    ephemeral: true,
+  });
+}
   // -------------------------------------------------------
   // /alreadywanked (admin)
   // -------------------------------------------------------
