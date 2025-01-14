@@ -666,7 +666,6 @@ if (interaction.commandName === "alreadywanked") {
       let existingCount = 0;
       let errorCount = 0;
 
-      // Fetch members with Bull role
       const bullRole = guild.roles.cache.get(BULL_ROLE_ID);
       const bearRole = guild.roles.cache.get(BEAR_ROLE_ID);
 
@@ -675,25 +674,32 @@ if (interaction.commandName === "alreadywanked") {
           return;
       }
 
-      // Get all members with either role
       const allMembers = [...bullRole.members.values(), ...bearRole.members.values()];
-      const uniqueMembers = [...new Set(allMembers)]; // Remove duplicates if any
-
-      const totalMembers = uniqueMembers.length;
-
-      // Process in batches
+      const totalMembers = allMembers.length;
       const BATCH_SIZE = 200;
       const totalBatches = Math.ceil(totalMembers / BATCH_SIZE);
 
-      for (let i = 0; i < uniqueMembers.length; i += BATCH_SIZE) {
-          const batch = uniqueMembers.slice(i, i + BATCH_SIZE);
+      // Create a new message for updates to avoid token expiration
+      const statusMessage = await interaction.channel?.send({
+          content: "Starting role assignment process...",
+          embeds: []
+      });
+
+      for (let i = 0; i < allMembers.length; i += BATCH_SIZE) {
+          const batch = allMembers.slice(i, i + BATCH_SIZE);
           const currentBatch = Math.floor(i / BATCH_SIZE) + 1;
 
-          await interaction.editReply({
-              content: `Processing Batch ${currentBatch}/${totalBatches}\n` +
-                      `Progress: ${i + batch.length}/${totalMembers}\n` +
-                      `Added: ${addedCount} | Existing: ${existingCount} | Errors: ${errorCount}`
-          });
+          try {
+              if (statusMessage) {
+                  await statusMessage.edit({
+                      content: `Processing Batch ${currentBatch}/${totalBatches}\n` +
+                              `Progress: ${i + batch.length}/${totalMembers}\n` +
+                              `Added: ${addedCount} | Existing: ${existingCount} | Errors: ${errorCount}`
+                  });
+              }
+          } catch (error) {
+              console.error("Failed to update status message, continuing process...");
+          }
 
           for (const member of batch) {
               try {
@@ -709,8 +715,7 @@ if (interaction.commandName === "alreadywanked") {
               }
           }
 
-          // Add delay between batches
-          await new Promise(resolve => setTimeout(resolve, 2000));
+          await new Promise(resolve => setTimeout(resolve, 1500)); // Reduced delay
       }
 
       const resultEmbed = new EmbedBuilder()
@@ -725,13 +730,25 @@ if (interaction.commandName === "alreadywanked") {
               `Success rate: ${((addedCount + existingCount) / totalMembers * 100).toFixed(1)}%`
           );
 
-      await interaction.editReply({ embeds: [resultEmbed] });
+      // Update final results in both places to ensure it's visible
+      if (statusMessage) {
+          await statusMessage.edit({ content: "", embeds: [resultEmbed] });
+      }
+      try {
+          await interaction.editReply({ embeds: [resultEmbed] });
+      } catch (error) {
+          console.error("Failed to update original reply, results shown in status message");
+      }
+
   } catch (err) {
       console.error("Error in alreadywanked command:", err);
-      await interaction.editReply("An error occurred while assigning roles to users.");
+      try {
+          await interaction.editReply("An error occurred while assigning roles to users.");
+      } catch {
+          await interaction.channel?.send("An error occurred while assigning roles to users.");
+      }
   }
 }
-
 
 
   // -------------------------------------------------------
