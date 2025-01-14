@@ -374,7 +374,10 @@ const commands = [
   new SlashCommandBuilder()
     .setName("alreadywanked")
     .setDescription("Assign new role to all verified users (Admin only)"),
-
+    // ====== /reload (Admin only) ======
+    new SlashCommandBuilder()
+        .setName("reload")
+        .setDescription("Force refresh Discord commands (Admin only)"),
   // ====== 3) /purgezerobalance ======
   new SlashCommandBuilder()
     .setName("purgezerobalance")
@@ -672,34 +675,62 @@ if (interaction.commandName === "wankme") {
       let addedCount = 0;
       let existingCount = 0;
       let errorCount = 0;
+      let processedCount = 0;
+      const totalUsers = verifiedUsers.length;
 
-      for (const user of verifiedUsers) {
-        try {
-          const member = await guild.members.fetch(user.discord_id);
-          if (member) {
-            if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
-              await member.roles.add(newRole);
-              addedCount++;
-            } else {
-              existingCount++;
+      // Process in batches of 100
+      const BATCH_SIZE = 100;
+const totalBatches = Math.ceil(verifiedUsers.length / BATCH_SIZE);
+let currentBatch = 0;
+
+for (let i = 0; i < verifiedUsers.length; i += BATCH_SIZE) {
+    currentBatch++;
+    const batch = verifiedUsers.slice(i, i + BATCH_SIZE);
+    
+    await interaction.editReply({
+        content: `Processing Batch ${currentBatch}/${totalBatches}\n` +
+                `Users: ${processedCount}/${totalUsers}\n` +
+                `Added: ${addedCount} | Existing: ${existingCount} | Errors: ${errorCount}`,
+    });
+
+        for (const user of batch) {
+          try {
+            if (!user.discord_id) {
+              errorCount++;
+              continue;
             }
+
+            const member = await guild.members.fetch(user.discord_id).catch(() => null);
+            if (member) {
+              if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+                await member.roles.add(newRole);
+                addedCount++;
+              } else {
+                existingCount++;
+              }
+            } else {
+              errorCount++;
+            }
+          } catch (err) {
+            console.error(`Error processing user ${user.discord_id}:`, err);
+            errorCount++;
           }
-        } catch (err) {
-          console.error(`Error processing user ${user.discord_id}:`, err);
-          errorCount++;
         }
-        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // Add delay between batches to avoid rate limits
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
 
       const resultEmbed = new EmbedBuilder()
         .setColor(0x0099ff)
         .setTitle("Already Wanked Role Assignment Complete")
         .setDescription(
-          `**Results:**\n\n` +
-            `• ${addedCount} users received the new role\n` +
-            `• ${existingCount} users already had the role\n` +
-            `• ${errorCount} errors encountered\n\n` +
-            `Total verified users processed: ${verifiedUsers.length}`
+          `**Final Results:**\n\n` +
+          `• ${addedCount} users received the new role\n` +
+          `• ${existingCount} users already had the role\n` +
+          `• ${errorCount} users were not accessible\n\n` +
+          `Total verified users processed: ${totalUsers}\n` +
+          `Success rate: ${((addedCount + existingCount) / totalUsers * 100).toFixed(1)}%`
         );
 
       await interaction.editReply({ embeds: [resultEmbed] });
@@ -707,7 +738,7 @@ if (interaction.commandName === "wankme") {
       console.error("Error in alreadywanked command:", err);
       await interaction.editReply("An error occurred while assigning roles to verified users.");
     }
-  }
+}
 
   // -------------------------------------------------------
   // /purgezerobalance (admin)
@@ -968,6 +999,41 @@ if (interaction.commandName === "wankme") {
       });
       return;
     }
+    // -------------------------------------------------------
+  // /reload (admin only)
+  // -------------------------------------------------------
+  if (interaction.commandName === "reload") {
+    if (!hasAdminRole(interaction.member)) {
+      await interaction.reply({
+        content: "You don't have permission to use this command.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    await interaction.deferReply();
+    
+    try {
+        const rest = new REST({ version: "10" }).setToken(discordBotToken!);
+        
+        console.log("Started refreshing application (/) commands.");
+        
+        await rest.put(Routes.applicationCommands(client.user!.id), {
+            body: commands,
+        });
+        
+        await interaction.editReply({
+          content: "Successfully reloaded application commands! Changes should be visible immediately.",
+          ephemeral: true
+        });
+    } catch (error) {
+        console.error("Error refreshing commands:", error);
+        await interaction.editReply({
+          content: "Error refreshing commands. Check logs for details.",
+          ephemeral: true
+        });
+    }
+  }
 
     // Defer to avoid 3-second timeout
     await interaction.deferReply({ ephemeral: true });
@@ -1377,10 +1443,31 @@ client.on("interactionCreate", async (interaction) => {
  *                GUILD MEMBER ADD EVENT
  ********************************************************************/
 client.on("guildMemberAdd", async (member) => {
+  // First add Mootard role as before
   const mootardRole = member.guild.roles.cache.get(MOOTARD_ROLE_ID);
   if (mootardRole) {
     await member.roles.add(mootardRole);
     console.log(`Added Mootard role to new member: ${member.user.tag}`);
+  }
+
+  // Check if they were previously verified
+  try {
+    const { data: userData, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("discord_id", member.id)
+      .single();
+
+    // If they have an address in database, they were verified
+    if (userData && userData.address) {
+      const wankmeRole = member.guild.roles.cache.get(NEW_WANKME_ROLE_ID);
+      if (wankmeRole && !member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+        await member.roles.add(wankmeRole);
+        console.log(`Restored wankme role for returning verified user: ${member.user.tag}`);
+      }
+    }
+  } catch (error) {
+    console.error(`Error checking verification status for new member ${member.user.tag}:`, error);
   }
 });
 
