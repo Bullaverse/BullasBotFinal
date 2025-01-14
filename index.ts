@@ -653,10 +653,20 @@ if (interaction.commandName === "wankme") {
     await interaction.deferReply();
 
     try {
+      // Get total count of verified users
+      const { count: totalCount } = await supabase
+        .from("users")
+        .select("*", { count: "exact" })
+        .not("address", "is", null);
+
+      // Get next batch of users
+      const BATCH_SIZE = 1000;
       const { data: verifiedUsers, error } = await supabase
         .from("users")
         .select("discord_id")
-        .not("address", "is", null);
+        .not("address", "is", null)
+        .order("created_at")  // Order by creation time to ensure consistent batching
+        .limit(BATCH_SIZE);
 
       if (error) throw error;
 
@@ -676,22 +686,23 @@ if (interaction.commandName === "wankme") {
       let existingCount = 0;
       let errorCount = 0;
       let processedCount = 0;
-      const totalUsers = verifiedUsers.length;
 
-      // Process in batches of 100
-      const BATCH_SIZE = 100;
-const totalBatches = Math.ceil(verifiedUsers.length / BATCH_SIZE);
-let currentBatch = 0;
+      // Process in smaller batches to avoid rate limits
+      const PROCESS_BATCH_SIZE = 100;
+      const totalBatches = Math.ceil(verifiedUsers.length / PROCESS_BATCH_SIZE);
+      let currentBatch = 0;
 
-for (let i = 0; i < verifiedUsers.length; i += BATCH_SIZE) {
-    currentBatch++;
-    const batch = verifiedUsers.slice(i, i + BATCH_SIZE);
-    
-    await interaction.editReply({
-        content: `Processing Batch ${currentBatch}/${totalBatches}\n` +
-                `Users: ${processedCount}/${totalUsers}\n` +
-                `Added: ${addedCount} | Existing: ${existingCount} | Errors: ${errorCount}`,
-    });
+      for (let i = 0; i < verifiedUsers.length; i += PROCESS_BATCH_SIZE) {
+        currentBatch++;
+        const batch = verifiedUsers.slice(i, i + PROCESS_BATCH_SIZE);
+        processedCount += batch.length;
+        
+        await interaction.editReply({
+          content: `Processing Batch ${currentBatch}/${totalBatches}\n` +
+                  `Users: ${processedCount}/${verifiedUsers.length}\n` +
+                  `Added: ${addedCount} | Existing: ${existingCount} | Errors: ${errorCount}\n` +
+                  `Total Progress: Processing users ${processedCount}/${totalCount}`,
+        });
 
         for (const user of batch) {
           try {
@@ -703,7 +714,9 @@ for (let i = 0; i < verifiedUsers.length; i += BATCH_SIZE) {
             const member = await guild.members.fetch(user.discord_id).catch(() => null);
             if (member) {
               if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
-                await member.roles.add(newRole);
+                if (!isSimulation) {
+                  await member.roles.add(newRole);
+                }
                 addedCount++;
               } else {
                 existingCount++;
@@ -729,8 +742,9 @@ for (let i = 0; i < verifiedUsers.length; i += BATCH_SIZE) {
           `• ${addedCount} users received the new role\n` +
           `• ${existingCount} users already had the role\n` +
           `• ${errorCount} users were not accessible\n\n` +
-          `Total verified users processed: ${totalUsers}\n` +
-          `Success rate: ${((addedCount + existingCount) / totalUsers * 100).toFixed(1)}%`
+          `Total verified users processed: ${verifiedUsers.length}\n` +
+          `Overall Progress: ${processedCount}/${totalCount} total users\n` +
+          `Success rate: ${((addedCount + existingCount) / verifiedUsers.length * 100).toFixed(1)}%`
         );
 
       await interaction.editReply({ embeds: [resultEmbed] });
@@ -1011,29 +1025,31 @@ for (let i = 0; i < verifiedUsers.length; i += BATCH_SIZE) {
       return;
     }
 
-    await interaction.deferReply();
+    await interaction.deferReply({ ephemeral: true });
     
     try {
+        // Get the guild ID for the current server
+        const guildId = interaction.guildId;
+        if (!guildId) {
+            await interaction.editReply("Failed to get guild ID.");
+            return;
+        }
+
         const rest = new REST({ version: "10" }).setToken(discordBotToken!);
         
-        console.log("Started refreshing application (/) commands.");
+        await interaction.editReply("Started refreshing application commands...");
+
+        await rest.put(
+            Routes.applicationGuildCommands(client.user!.id, guildId),
+            { body: commands }
+        );
         
-        await rest.put(Routes.applicationCommands(client.user!.id), {
-            body: commands,
-        });
-        
-        await interaction.editReply({
-          content: "Successfully reloaded application commands! Changes should be visible immediately.",
-          ephemeral: true
-        });
+        await interaction.editReply("Successfully reloaded all application commands! Changes should be visible immediately.");
     } catch (error) {
         console.error("Error refreshing commands:", error);
-        await interaction.editReply({
-          content: "Error refreshing commands. Check logs for details.",
-          ephemeral: true
-        });
+        await interaction.editReply(`Failed to reload commands: ${error}`);
     }
-  }
+}
 
     // Defer to avoid 3-second timeout
     await interaction.deferReply({ ephemeral: true });
