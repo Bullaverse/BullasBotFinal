@@ -71,9 +71,7 @@ process.on('unhandledRejection', (error) => {
 /********************************************************************
  *                     ROLE CONSTANTS
  ********************************************************************/
-/**  
- *  Replace these with your actual role IDs from the Discord server.  
- */
+
 const WHITELIST_ROLE_ID        = "1263470313300295751";
 const MOOLALIST_ROLE_ID        = "1263470568536014870";
 const FREE_MINT_ROLE_ID        = "1328473525710884864";       // Free Mint Role
@@ -92,6 +90,8 @@ const ADMIN_ROLE_IDS = [
   "1230906465334853785",
   "1234239721165815818",
 ];
+
+
 
 /********************************************************************
  *                     HELPER FUNCTIONS
@@ -638,121 +638,168 @@ if (interaction.commandName === "wankme") {
     ephemeral: true,
   });
 }
-  // -------------------------------------------------------
-  // /alreadywanked (admin)
-  // -------------------------------------------------------
-  if (interaction.commandName === "alreadywanked") {
-    if (!hasAdminRole(interaction.member)) {
-      await interaction.reply({
-        content: "You don't have permission to use this command.",
-        ephemeral: true,
-      });
-      return;
+const BATCH_SIZE = 1000;        // how many rows to fetch each round
+const PROCESS_BATCH_SIZE = 100; // how many Discord role-assigns to process each sub-batch
+
+// -------------------------------------------------------
+// /alreadywanked (admin)
+// -------------------------------------------------------
+if (interaction.commandName === "alreadywanked") {
+  if (!hasAdminRole(interaction.member)) {
+    await interaction.reply({
+      content: "You don't have permission to use this command.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply();
+
+  try {
+    // 1. Get total count of verified users (for progress info)
+    const { count: totalCount } = await supabase
+      .from("users")
+      .select("*", { count: "exact" })
+      .not("address", "is", null);
+
+    if (typeof totalCount !== "number") {
+      throw new Error("Could not get total user count from Supabase.");
     }
 
-    await interaction.deferReply();
+    // 2. Fetch All Verified Users (multi-query pagination)
+    let allVerifiedUsers = [];
+    let from = 0;
+    let to = BATCH_SIZE - 1;
 
-    try {
-      // Get total count of verified users
-      const { count: totalCount } = await supabase
-        .from("users")
-        .select("*", { count: "exact" })
-        .not("address", "is", null);
-
-      // Get next batch of users
-      const BATCH_SIZE = 1000;
-      const { data: verifiedUsers, error } = await supabase
+    while (true) {
+      const { data: batchData, error } = await supabase
         .from("users")
         .select("discord_id")
         .not("address", "is", null)
-        .order("created_at")  // Order by creation time to ensure consistent batching
-        .limit(BATCH_SIZE);
+        .order("created_at", { ascending: true })
+        .range(from, to); 
 
-      if (error) throw error;
-
-      const guild = interaction.guild;
-      if (!guild) {
-        await interaction.editReply("Failed to find guild.");
-        return;
+      if (error) {
+        throw error;
       }
 
-      const newRole = guild.roles.cache.get(NEW_WANKME_ROLE_ID);
-      if (!newRole) {
-        await interaction.editReply("Failed to find the new role.");
-        return;
+      if (!batchData || batchData.length === 0) {
+        // No more rows found
+        break;
       }
 
-      let addedCount = 0;
-      let existingCount = 0;
-      let errorCount = 0;
-      let processedCount = 0;
+      allVerifiedUsers = allVerifiedUsers.concat(batchData);
 
-      // Process in smaller batches to avoid rate limits
-      const PROCESS_BATCH_SIZE = 100;
-      const totalBatches = Math.ceil(verifiedUsers.length / PROCESS_BATCH_SIZE);
-      let currentBatch = 0;
+      // If we got fewer than BATCH_SIZE rows, we're done
+      if (batchData.length < BATCH_SIZE) {
+        break;
+      }
 
-      for (let i = 0; i < verifiedUsers.length; i += PROCESS_BATCH_SIZE) {
-        currentBatch++;
-        const batch = verifiedUsers.slice(i, i + PROCESS_BATCH_SIZE);
-        processedCount += batch.length;
-        
-        await interaction.editReply({
-          content: `Processing Batch ${currentBatch}/${totalBatches}\n` +
-                  `Users: ${processedCount}/${verifiedUsers.length}\n` +
-                  `Added: ${addedCount} | Existing: ${existingCount} | Errors: ${errorCount}\n` +
-                  `Total Progress: Processing users ${processedCount}/${totalCount}`,
-        });
+      // Otherwise, move to the next batch
+      from += BATCH_SIZE;
+      to += BATCH_SIZE;
+    }
 
-        for (const user of batch) {
-          try {
-            if (!user.discord_id) {
-              errorCount++;
-              continue;
-            }
+    // allVerifiedUsers now has *all* the rows that match your criteria
+    // console.log(`Fetched ${allVerifiedUsers.length} verified users total`);
 
-            const member = await guild.members.fetch(user.discord_id).catch(() => null);
-            if (member) {
-              if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
-                if (!isSimulation) {
-                  await member.roles.add(newRole);
-                }
-                addedCount++;
-              } else {
-                existingCount++;
+    // 3. Set up guild & role
+    const guild = interaction.guild;
+    if (!guild) {
+      await interaction.editReply("Failed to find guild.");
+      return;
+    }
+
+    const newRole = guild.roles.cache.get(NEW_WANKME_ROLE_ID);
+    if (!newRole) {
+      await interaction.editReply("Failed to find the new role.");
+      return;
+    }
+
+    let addedCount = 0;
+    let existingCount = 0;
+    let errorCount = 0;
+    let processedCount = 0;
+
+    // 4. Process in smaller sub-batches to avoid rate limits
+    const totalBatches = Math.ceil(allVerifiedUsers.length / PROCESS_BATCH_SIZE);
+    let currentBatch = 0;
+
+    for (let i = 0; i < allVerifiedUsers.length; i += PROCESS_BATCH_SIZE) {
+      currentBatch++;
+      const subBatch = allVerifiedUsers.slice(i, i + PROCESS_BATCH_SIZE);
+      processedCount += subBatch.length;
+
+      // Update reply with progress
+      await interaction.editReply({
+        content:
+          `Processing Batch ${currentBatch}/${totalBatches}\n` +
+          `Users (this chunk): ${processedCount}/${allVerifiedUsers.length}\n` +
+          `Added: ${addedCount} | Existing: ${existingCount} | Errors: ${errorCount}\n\n` +
+          `Total Progress: ${processedCount}/${totalCount} verified users`,
+      });
+
+      // 5. For each user in sub-batch, try to add role
+      for (const user of subBatch) {
+        try {
+          if (!user.discord_id) {
+            errorCount++;
+            continue;
+          }
+
+          const member = await guild.members
+            .fetch(user.discord_id)
+            .catch(() => null);
+
+          if (member) {
+            // Check if user already has the role
+            if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+              if (!isSimulation) {
+                await member.roles.add(newRole);
               }
+              addedCount++;
             } else {
-              errorCount++;
+              existingCount++;
             }
-          } catch (err) {
-            console.error(`Error processing user ${user.discord_id}:`, err);
+          } else {
             errorCount++;
           }
+        } catch (err) {
+          console.error(`Error processing user ${user.discord_id}:`, err);
+          errorCount++;
         }
-
-        // Add delay between batches to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, 2000));
       }
 
-      const resultEmbed = new EmbedBuilder()
-        .setColor(0x0099ff)
-        .setTitle("Already Wanked Role Assignment Complete")
-        .setDescription(
-          `**Final Results:**\n\n` +
+      // Add delay between sub-batches to avoid potential rate limits
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+
+    // 6. Final embed summary
+    const resultEmbed = new EmbedBuilder()
+      .setColor(0x0099ff)
+      .setTitle("Already Wanked Role Assignment Complete")
+      .setDescription(
+        `**Final Results:**\n\n` +
           `• ${addedCount} users received the new role\n` +
           `• ${existingCount} users already had the role\n` +
           `• ${errorCount} users were not accessible\n\n` +
-          `Total verified users processed: ${verifiedUsers.length}\n` +
+          `Total verified users processed: ${allVerifiedUsers.length}\n` +
           `Overall Progress: ${processedCount}/${totalCount} total users\n` +
-          `Success rate: ${((addedCount + existingCount) / verifiedUsers.length * 100).toFixed(1)}%`
-        );
+          `Success rate: ${(
+            ((addedCount + existingCount) / allVerifiedUsers.length) *
+            100
+          ).toFixed(1)}%`
+      );
 
-      await interaction.editReply({ embeds: [resultEmbed] });
-    } catch (err) {
-      console.error("Error in alreadywanked command:", err);
-      await interaction.editReply("An error occurred while assigning roles to verified users.");
-    }
+    await interaction.editReply({ embeds: [resultEmbed] });
+  } catch (err) {
+    console.error("Error in alreadywanked command:", err);
+    await interaction.editReply(
+      "An error occurred while assigning roles to verified users."
+    );
+  }
 }
+
 
   // -------------------------------------------------------
   // /purgezerobalance (admin)
@@ -1013,44 +1060,6 @@ if (interaction.commandName === "wankme") {
       });
       return;
     }
-    // -------------------------------------------------------
-  // /reload (admin only)
-  // -------------------------------------------------------
-  if (interaction.commandName === "reload") {
-    if (!hasAdminRole(interaction.member)) {
-      await interaction.reply({
-        content: "You don't have permission to use this command.",
-        ephemeral: true,
-      });
-      return;
-    }
-
-    await interaction.deferReply({ ephemeral: true });
-    
-    try {
-        // Get the guild ID for the current server
-        const guildId = interaction.guildId;
-        if (!guildId) {
-            await interaction.editReply("Failed to get guild ID.");
-            return;
-        }
-
-        const rest = new REST({ version: "10" }).setToken(discordBotToken!);
-        
-        await interaction.editReply("Started refreshing application commands...");
-
-        await rest.put(
-            Routes.applicationGuildCommands(client.user!.id, guildId),
-            { body: commands }
-        );
-        
-        await interaction.editReply("Successfully reloaded all application commands! Changes should be visible immediately.");
-    } catch (error) {
-        console.error("Error refreshing commands:", error);
-        await interaction.editReply(`Failed to reload commands: ${error}`);
-    }
-}
-
     // Defer to avoid 3-second timeout
     await interaction.deferReply({ ephemeral: true });
 
@@ -1152,6 +1161,43 @@ if (interaction.commandName === "wankme") {
       await interaction.reply("An error occurred while processing the fine command.");
     }
   }
+  // -------------------------------------------------------
+  // /reload (admin only)
+  // -------------------------------------------------------
+  if (interaction.commandName === "reload") {
+    if (!hasAdminRole(interaction.member)) {
+      await interaction.reply({
+        content: "You don't have permission to use this command.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    await interaction.deferReply({ ephemeral: true });
+    
+    try {
+        // Get the guild ID for the current server
+        const guildId = interaction.guildId;
+        if (!guildId) {
+            await interaction.editReply("Failed to get guild ID.");
+            return;
+        }
+
+        const rest = new REST({ version: "10" }).setToken(discordBotToken!);
+        
+        await interaction.editReply("Started refreshing application commands...");
+
+        await rest.put(
+            Routes.applicationGuildCommands(client.user!.id, guildId),
+            { body: commands }
+        );
+        
+        await interaction.editReply("Successfully reloaded all application commands! Changes should be visible immediately.");
+    } catch (error) {
+        console.error("Error refreshing commands:", error);
+        await interaction.editReply(`Failed to reload commands: ${error}`);
+    }
+}
 
   // -------------------------------------------------------
   // /updatewhitelistminimum (admin only)
