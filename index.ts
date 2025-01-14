@@ -638,9 +638,6 @@ if (interaction.commandName === "wankme") {
     ephemeral: true,
   });
 }
-const BATCH_SIZE = 1000;        // how many rows to fetch each round
-const PROCESS_BATCH_SIZE = 100; // how many Discord role-assigns to process each sub-batch
-
 // -------------------------------------------------------
 // /alreadywanked (admin)
 // -------------------------------------------------------
@@ -654,10 +651,9 @@ if (interaction.commandName === "alreadywanked") {
   }
 
   await interaction.deferReply();
-  const isSimulation = false;
 
   try {
-    // 1. Get total count of verified users (for progress info)
+    // 1. Get total count of users who have a non-null address (or remove this if not needed)
     const { count: totalCount } = await supabase
       .from("users")
       .select("*", { count: "exact" })
@@ -667,8 +663,9 @@ if (interaction.commandName === "alreadywanked") {
       throw new Error("Could not get total user count from Supabase.");
     }
 
-    // 2. Fetch All Verified Users (multi-query pagination)
+    // 2. Fetch all relevant users (in pages of BATCH_SIZE)
     let allVerifiedUsers = [];
+    const BATCH_SIZE = 1000;
     let from = 0;
     let to = BATCH_SIZE - 1;
 
@@ -676,33 +673,27 @@ if (interaction.commandName === "alreadywanked") {
       const { data: batchData, error } = await supabase
         .from("users")
         .select("discord_id")
-        .not("address", "is", null)
+        .not("address", "is", null) 
         .order("created_at", { ascending: true })
-        .range(from, to); 
+        .range(from, to);
 
       if (error) {
         throw error;
       }
 
       if (!batchData || batchData.length === 0) {
-        // No more rows found
-        break;
+        break; // no more rows
       }
 
       allVerifiedUsers = allVerifiedUsers.concat(batchData);
 
-      // If we got fewer than BATCH_SIZE rows, we're done
       if (batchData.length < BATCH_SIZE) {
-        break;
+        break; // last page
       }
 
-      // Otherwise, move to the next batch
       from += BATCH_SIZE;
       to += BATCH_SIZE;
     }
-
-    // allVerifiedUsers now has *all* the rows that match your criteria
-    // console.log(`Fetched ${allVerifiedUsers.length} verified users total`);
 
     // 3. Set up guild & role
     const guild = interaction.guild;
@@ -719,10 +710,12 @@ if (interaction.commandName === "alreadywanked") {
 
     let addedCount = 0;
     let existingCount = 0;
+    let skippedCount = 0; // If they don't have Bull or Bear, we'll skip them
     let errorCount = 0;
     let processedCount = 0;
 
     // 4. Process in smaller sub-batches to avoid rate limits
+    const PROCESS_BATCH_SIZE = 100;
     const totalBatches = Math.ceil(allVerifiedUsers.length / PROCESS_BATCH_SIZE);
     let currentBatch = 0;
 
@@ -736,7 +729,7 @@ if (interaction.commandName === "alreadywanked") {
         content:
           `Processing Batch ${currentBatch}/${totalBatches}\n` +
           `Users (this chunk): ${processedCount}/${allVerifiedUsers.length}\n` +
-          `Added: ${addedCount} | Existing: ${existingCount} | Errors: ${errorCount}\n\n` +
+          `Added: ${addedCount} | Existing: ${existingCount} | Skipped: ${skippedCount} | Errors: ${errorCount}\n\n` +
           `Total Progress: ${processedCount}/${totalCount} verified users`,
       });
 
@@ -753,16 +746,25 @@ if (interaction.commandName === "alreadywanked") {
             .catch(() => null);
 
           if (member) {
-            // Check if user already has the role
-            if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
-              if (!isSimulation) {
+            // **Check if user has Bull or Bear before anything else**
+            if (
+              member.roles.cache.has(BULL_ROLE_ID) ||
+              member.roles.cache.has(BEAR_ROLE_ID)
+            ) {
+              // Then check if they already have the new role
+              if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+                // Add the new role
                 await member.roles.add(newRole);
+                addedCount++;
+              } else {
+                existingCount++;
               }
-              addedCount++;
             } else {
-              existingCount++;
+              // They don't have bull or bear, so skip them
+              skippedCount++;
             }
           } else {
+            // Could not fetch user or they're not in the guild
             errorCount++;
           }
         } catch (err) {
@@ -783,6 +785,7 @@ if (interaction.commandName === "alreadywanked") {
         `**Final Results:**\n\n` +
           `• ${addedCount} users received the new role\n` +
           `• ${existingCount} users already had the role\n` +
+          `• ${skippedCount} users did NOT have Bull or Bear roles (skipped)\n` +
           `• ${errorCount} users were not accessible\n\n` +
           `Total verified users processed: ${allVerifiedUsers.length}\n` +
           `Overall Progress: ${processedCount}/${totalCount} total users\n` +
@@ -800,6 +803,7 @@ if (interaction.commandName === "alreadywanked") {
     );
   }
 }
+
 
 
   // -------------------------------------------------------
