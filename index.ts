@@ -654,6 +654,7 @@ if (interaction.commandName === "alreadywanked") {
   }
 
   await interaction.deferReply();
+  const isSimulation = false;
 
   try {
     // 1. Get total count of verified users (for progress info)
