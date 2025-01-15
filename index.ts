@@ -532,7 +532,10 @@ const commands = [
         .setDescription("The new minimum value")
         .setRequired(true)
     ),
-
+    //wankme
+    new SlashCommandBuilder()
+    .setName("wankme")
+    .setDescription("Get started with Moola Wars and earn your roles"),
   // ====== 11) /leaderboard ======
   new SlashCommandBuilder()
     .setName("leaderboard")
@@ -574,6 +577,12 @@ client.once("ready", async () => {
   // Register slash commands
   const rest = new REST({ version: "10" }).setToken(discordBotToken!);
   try {
+    // First, remove all existing commands
+    console.log("Started removing old commands...");
+    await rest.put(Routes.applicationCommands(client.user!.id), { body: [] });
+    console.log("Successfully removed old commands.");
+
+    // Then, register new commands
     console.log("Started refreshing application (/) commands.");
     await rest.put(Routes.applicationCommands(client.user!.id), {
       body: commands,
@@ -846,7 +855,44 @@ client.on("interactionCreate", async (interaction) => {
       await interaction.editReply("An error occurred while assigning roles to verified users.");
     }
   }
-
+  //wankme
+  if (interaction.commandName === "wankme") {
+    await interaction.deferReply();
+    const userId = interaction.user.id;
+  
+    try {
+      const { data: existingUser } = await supabase
+        .from("users")
+        .select("*")
+        .eq("discord_id", userId)
+        .single();
+  
+      if (existingUser) {
+        await interaction.editReply("You have already initiated your wankme journey!");
+        return;
+      }
+  
+      const uuid = v4();
+      const { error: tokenError } = await supabase
+        .from("tokens")
+        .insert({ token: uuid, discord_id: userId, used: false })
+        .single();
+  
+      if (tokenError) {
+        console.error("Error creating token:", tokenError);
+        await interaction.editReply("An error occurred while generating your token.");
+        return;
+      }
+  
+      const vercelUrl = `${process.env.VERCEL_URL}/wankme?token=${uuid}&discord=${userId}`;
+      await interaction.editReply(
+        `Hey ${interaction.user.username}, click this link to get started:\n\n${vercelUrl}`
+      );
+    } catch (error) {
+      console.error("Error in wankme command:", error);
+      await interaction.editReply("An error occurred while processing your request.");
+    }
+  }
   // -------------------------------------------------------
   // /purgezerobalance (admin)
   // -------------------------------------------------------
