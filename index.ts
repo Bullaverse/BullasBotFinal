@@ -71,7 +71,9 @@ process.on('unhandledRejection', (error) => {
 /********************************************************************
  *                     ROLE CONSTANTS
  ********************************************************************/
-
+/**  
+ *  Replace these with your actual role IDs from the Discord server.  
+ */
 const WHITELIST_ROLE_ID        = "1263470313300295751";
 const MOOLALIST_ROLE_ID        = "1263470568536014870";
 const FREE_MINT_ROLE_ID        = "1328473525710884864";       // Free Mint Role
@@ -90,8 +92,6 @@ const ADMIN_ROLE_IDS = [
   "1230906465334853785",
   "1234239721165815818",
 ];
-
-
 
 /********************************************************************
  *                     HELPER FUNCTIONS
@@ -136,7 +136,181 @@ async function getTopPlayers(team: string, limit: number) {
   if (error) throw error;
   return data;
 }
- 
+// updaterolesfunction
+
+async function updateWhitelistRoles(
+  guild: Guild,
+  teamType: 'winning' | 'losing',
+  threshold: number,
+  isSimulation: boolean = false
+) {
+  console.log(`${isSimulation ? 'Simulating' : 'Starting'} whitelist role update for ${teamType} team...`);
+
+  let roleUpdateLog = {
+    added: 0,
+    existing: 0
+  };
+
+  const whitelistRole = guild.roles.cache.get(WHITELIST_ROLE_ID);
+  const wlWinnerRole = guild.roles.cache.get(WL_WINNER_ROLE_ID);
+
+  if (!whitelistRole || !wlWinnerRole) {
+    console.error("Whitelist roles not found. Aborting role update.");
+    return roleUpdateLog;
+  }
+
+  const teamPoints = await getTeamPoints();
+  const winningTeam = teamPoints.bullas > teamPoints.beras ? "bullas" : "beras";
+  const targetTeam = teamType === "winning" ? winningTeam : winningTeam === "bullas" ? "beras" : "bullas";
+
+  const { data: players, error } = await supabase
+    .from("users")
+    .select("discord_id, points, team")
+    .eq("team", targetTeam);
+
+  if (error) {
+    console.error("Error fetching players:", error);
+    return roleUpdateLog;
+  }
+
+  for (const player of players) {
+    if (player.discord_id) {
+      try {
+        const member = await guild.members.fetch(player.discord_id);
+        if (member && player.points >= threshold) {
+          if (!member.roles.cache.has(WHITELIST_ROLE_ID) && !member.roles.cache.has(WL_WINNER_ROLE_ID)) {
+            if (!isSimulation) {
+              await member.roles.add(whitelistRole);
+            }
+            roleUpdateLog.added++;
+          } else {
+            roleUpdateLog.existing++;
+          }
+        }
+      } catch (err) {
+        console.error(`Error ${isSimulation ? 'simulating' : 'updating'} WL role for user ${player.discord_id}:`, err);
+      }
+    }
+  }
+
+  return roleUpdateLog;
+}
+
+async function updateMoolalistRoles(
+  guild: Guild,
+  teamType: 'winning' | 'losing',
+  threshold: number,
+  isSimulation: boolean = false
+) {
+  console.log(`${isSimulation ? 'Simulating' : 'Starting'} moolalist role update for ${teamType} team...`);
+
+  let roleUpdateLog = {
+    added: 0,
+    existing: 0
+  };
+
+  const moolalistRole = guild.roles.cache.get(MOOLALIST_ROLE_ID);
+  const mlWinnerRole = guild.roles.cache.get(ML_WINNER_ROLE_ID);
+
+  if (!moolalistRole || !mlWinnerRole) {
+    console.error("Moolalist roles not found. Aborting role update.");
+    return roleUpdateLog;
+  }
+
+  const teamPoints = await getTeamPoints();
+  const winningTeam = teamPoints.bullas > teamPoints.beras ? "bullas" : "beras";
+  const targetTeam = teamType === "winning" ? winningTeam : winningTeam === "bullas" ? "beras" : "bullas";
+
+  const { data: players, error } = await supabase
+    .from("users")
+    .select("discord_id, points, team")
+    .eq("team", targetTeam);
+
+  if (error) {
+    console.error("Error fetching players:", error);
+    return roleUpdateLog;
+  }
+
+  for (const player of players) {
+    if (player.discord_id) {
+      try {
+        const member = await guild.members.fetch(player.discord_id);
+        if (member && player.points >= threshold) {
+          if (!member.roles.cache.has(MOOLALIST_ROLE_ID) && !member.roles.cache.has(ML_WINNER_ROLE_ID)) {
+            if (!isSimulation) {
+              await member.roles.add(moolalistRole);
+            }
+            roleUpdateLog.added++;
+          } else {
+            roleUpdateLog.existing++;
+          }
+        }
+      } catch (err) {
+        console.error(`Error ${isSimulation ? 'simulating' : 'updating'} ML role for user ${player.discord_id}:`, err);
+      }
+    }
+  }
+
+  return roleUpdateLog;
+}
+
+async function updateFreeMintRoles(
+  guild: Guild,
+  teamType: 'winning' | 'losing',
+  threshold: number,
+  isSimulation: boolean = false
+) {
+  console.log(`${isSimulation ? 'Simulating' : 'Starting'} free mint role update for ${teamType} team...`);
+
+  let roleUpdateLog = {
+    added: 0,
+    existing: 0
+  };
+
+  const freeMintRole = guild.roles.cache.get(FREE_MINT_ROLE_ID);
+  const fmWinnerRole = guild.roles.cache.get(FREE_MINT_WINNER_ROLE_ID);
+
+  if (!freeMintRole || !fmWinnerRole) {
+    console.error("Free mint roles not found. Aborting role update.");
+    return roleUpdateLog;
+  }
+
+  const teamPoints = await getTeamPoints();
+  const winningTeam = teamPoints.bullas > teamPoints.beras ? "bullas" : "beras";
+  const targetTeam = teamType === "winning" ? winningTeam : winningTeam === "bullas" ? "beras" : "bullas";
+
+  const { data: players, error } = await supabase
+    .from("users")
+    .select("discord_id, points, team")
+    .eq("team", targetTeam);
+
+  if (error) {
+    console.error("Error fetching players:", error);
+    return roleUpdateLog;
+  }
+
+  for (const player of players) {
+    if (player.discord_id) {
+      try {
+        const member = await guild.members.fetch(player.discord_id);
+        if (member && player.points >= threshold) {
+          if (!member.roles.cache.has(FREE_MINT_ROLE_ID) && !member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID)) {
+            if (!isSimulation) {
+              await member.roles.add(freeMintRole);
+            }
+            roleUpdateLog.added++;
+          } else {
+            roleUpdateLog.existing++;
+          }
+        }
+      } catch (err) {
+        console.error(`Error ${isSimulation ? 'simulating' : 'updating'} Free Mint role for user ${player.discord_id}:`, err);
+      }
+    }
+  }
+
+  return roleUpdateLog;
+}
 /********************************************************************
  *                     CSV CREATION & SAVING
  ********************************************************************/
@@ -200,116 +374,6 @@ async function saveCSV(content: string, filename: string) {
 }
 
 /********************************************************************
- *                   UPDATE ROLES (WITH SIMULATION)
- ********************************************************************/
-async function updateRoles(
-  guild: Guild,
-  teamType: 'winning' | 'losing',
-  wlThreshold: number,
-  mlThreshold: number,
-  freemintThreshold: number,
-  isSimulation: boolean = false
-) {
-  console.log(`${isSimulation ? 'Simulating' : 'Starting'} role update process for ${teamType} team...`);
-
-  let roleUpdateLog = {
-    whitelist: { added: 0, existing: 0 },
-    moolalist: { added: 0, existing: 0 },
-    freemint: { added: 0, existing: 0 },
-  };
-
-  const whitelistRole     = guild.roles.cache.get(WHITELIST_ROLE_ID);
-  const moolalistRole     = guild.roles.cache.get(MOOLALIST_ROLE_ID);
-  const freeMintRole      = guild.roles.cache.get(FREE_MINT_ROLE_ID);
-  const wlWinnerRole      = guild.roles.cache.get(WL_WINNER_ROLE_ID);
-  const mlWinnerRole      = guild.roles.cache.get(ML_WINNER_ROLE_ID);
-  const freeMintWinnerRole= guild.roles.cache.get(FREE_MINT_WINNER_ROLE_ID);
-
-  if (!whitelistRole || !moolalistRole || !freeMintRole || !wlWinnerRole || !mlWinnerRole || !freeMintWinnerRole) {
-    console.error("One or more roles not found. Aborting role update.");
-    return roleUpdateLog;
-  }
-
-  const teamPoints = await getTeamPoints();
-  const winningTeam = teamPoints.bullas > teamPoints.beras ? "bullas" : "beras";
-  const targetTeam =
-    teamType === "winning"
-      ? winningTeam
-      : winningTeam === "bullas"
-      ? "beras"
-      : "bullas";
-
-  const { data: players, error } = await supabase
-    .from("users")
-    .select("discord_id, points, team")
-    .eq("team", targetTeam);
-
-  if (error) {
-    console.error("Error fetching players:", error);
-    return roleUpdateLog;
-  }
-
-  console.log(`${isSimulation ? 'Simulating for' : 'Processing'} ${players.length} players in ${targetTeam} team...`);
-
-  for (const player of players) {
-    if (player.discord_id) {
-      try {
-        const member = await guild.members.fetch(player.discord_id);
-        if (member) {
-          // Whitelist
-          if (player.points >= wlThreshold) {
-            if (!member.roles.cache.has(WHITELIST_ROLE_ID) && !member.roles.cache.has(WL_WINNER_ROLE_ID)) {
-              if (!isSimulation) {
-                await member.roles.add(whitelistRole);
-              }
-              roleUpdateLog.whitelist.added++;
-            } else {
-              roleUpdateLog.whitelist.existing++;
-            }
-          }
-
-          // Moolalist
-          if (player.points >= mlThreshold) {
-            if (!member.roles.cache.has(MOOLALIST_ROLE_ID) && !member.roles.cache.has(ML_WINNER_ROLE_ID)) {
-              if (!isSimulation) {
-                await member.roles.add(moolalistRole);
-              }
-              roleUpdateLog.moolalist.added++;
-            } else {
-              roleUpdateLog.moolalist.existing++;
-            }
-          }
-
-          // Free Mint
-          if (player.points >= freemintThreshold) {
-            if (
-              !member.roles.cache.has(FREE_MINT_ROLE_ID) &&
-              !member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID)
-            ) {
-              if (!isSimulation) {
-                await member.roles.add(freeMintRole);
-              }
-              roleUpdateLog.freemint.added++;
-            } else {
-              roleUpdateLog.freemint.existing++;
-            }
-          }
-        }
-      } catch (err) {
-        console.error(
-          `Error ${isSimulation ? 'simulating' : 'updating'} roles for user ${
-            player.discord_id
-          }:`,
-          err
-        );
-      }
-    }
-  }
-
-  return roleUpdateLog;
-}
-
-/********************************************************************
  *            EXCLUDE THESE USERS FROM LEADERBOARD
  ********************************************************************/
 const EXCLUDED_USER_IDS = [
@@ -342,30 +406,54 @@ let WHITELIST_MINIMUM = 100;
 const commands = [
   // ====== 1) /updateroles ======
   new SlashCommandBuilder()
-    .setName("updateroles")
-    .setDescription("Manually update roles")
+    .setName("updatewl")
+    .setDescription("Update Whitelist roles")
     .addStringOption((option) =>
       option
         .setName("team")
-        .setDescription("Team to update roles for")
+        .setDescription("Team to update WL roles for")
         .setRequired(true)
         .addChoices({ name: "Winning", value: "winning" }, { name: "Losing", value: "losing" })
     )
     .addIntegerOption((option) =>
       option
-        .setName("wl_threshold")
+        .setName("threshold")
         .setDescription("MOOLA threshold for WL role")
         .setRequired(true)
+    ),
+
+  // 2. /updateml command
+  new SlashCommandBuilder()
+    .setName("updateml")
+    .setDescription("Update Moolalist roles")
+    .addStringOption((option) =>
+      option
+        .setName("team")
+        .setDescription("Team to update ML roles for")
+        .setRequired(true)
+        .addChoices({ name: "Winning", value: "winning" }, { name: "Losing", value: "losing" })
     )
     .addIntegerOption((option) =>
       option
-        .setName("ml_threshold")
+        .setName("threshold")
         .setDescription("MOOLA threshold for ML role")
         .setRequired(true)
+    ),
+
+  // 3. /updatefreemint command
+  new SlashCommandBuilder()
+    .setName("updatefreemint")
+    .setDescription("Update Free Mint roles")
+    .addStringOption((option) =>
+      option
+        .setName("team")
+        .setDescription("Team to update Free Mint roles for")
+        .setRequired(true)
+        .addChoices({ name: "Winning", value: "winning" }, { name: "Losing", value: "losing" })
     )
     .addIntegerOption((option) =>
       option
-        .setName("freemint_threshold")
+        .setName("threshold")
         .setDescription("MOOLA threshold for Free Mint role")
         .setRequired(true)
     ),
@@ -374,10 +462,7 @@ const commands = [
   new SlashCommandBuilder()
     .setName("alreadywanked")
     .setDescription("Assign new role to all verified users (Admin only)"),
-    // ====== /reload (Admin only) ======
-    new SlashCommandBuilder()
-        .setName("reload")
-        .setDescription("Force refresh Discord commands (Admin only)"),
+
   // ====== 3) /purgezerobalance ======
   new SlashCommandBuilder()
     .setName("purgezerobalance")
@@ -436,10 +521,6 @@ const commands = [
         .setDescription("The amount to fine")
         .setRequired(true)
     ),
-    // WANKME
-new SlashCommandBuilder()
-.setName("wankme")
-.setDescription("Link your Discord account to your address"),
 
   // ====== 10) /updatewhitelistminimum (Admin only) ======
   new SlashCommandBuilder()
@@ -510,66 +591,52 @@ client.on("interactionCreate", async (interaction) => {
   if (!interaction.isCommand()) return;
 
   // -------------------------------------------------------
-  // /updateroles (with simulation first)
+  // 1) /updatewl
   // -------------------------------------------------------
-  if (interaction.commandName === "updateroles") {
+  if (interaction.commandName === "updatewl") {
     if (!hasAdminRole(interaction.member)) {
-      await interaction.reply({
+      return interaction.reply({
         content: "You don't have permission to use this command.",
         ephemeral: true,
       });
-      return;
     }
 
     await interaction.deferReply();
     const guild = interaction.guild;
-
     if (!guild) {
-      await interaction.editReply("Failed to simulate: Guild not found.");
-      return;
+      return interaction.editReply("Failed to simulate: Guild not found.");
     }
 
-    const team = interaction.options.getString("team", true) as 'winning' | 'losing';
-    const wlThreshold = interaction.options.getInteger("wl_threshold", true);
-    const mlThreshold = interaction.options.getInteger("ml_threshold", true);
-    const freemintThreshold = interaction.options.getInteger("freemint_threshold", true);
+    const team = interaction.options.getString("team", true) as "winning" | "losing";
+    const threshold = interaction.options.getInteger("threshold", true);
 
     try {
       // Simulation
-      const simulationLog = await updateRoles(
+      const simulationLog = await updateWhitelistRoles(
         guild,
         team,
-        wlThreshold,
-        mlThreshold,
-        freemintThreshold,
+        threshold,
         true // isSimulation
       );
 
-      // Show simulation results
       const simResultMsg = new EmbedBuilder()
         .setColor(0x0099ff)
-        .setTitle("Role Update Simulation Results")
+        .setTitle("Whitelist Role Update Simulation")
         .setDescription(
           `**Here's what will happen if you proceed:**\n\n` +
             `**Whitelist Role:**\n` +
-            `• ${simulationLog.whitelist.added} users will receive the role\n` +
-            `• ${simulationLog.whitelist.existing} users already have it\n\n` +
-            `**Moolalist Role:**\n` +
-            `• ${simulationLog.moolalist.added} users will receive the role\n` +
-            `• ${simulationLog.moolalist.existing} users already have it\n\n` +
-            `**Free Mint Role:**\n` +
-            `• ${simulationLog.freemint.added} users will receive the role\n` +
-            `• ${simulationLog.freemint.existing} users already have it\n\n` +
+            `• ${simulationLog.added} users will receive the role\n` +
+            `• ${simulationLog.existing} users already have it\n\n` +
             `Would you like to proceed with these changes?`
         );
 
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
-          .setCustomId(`confirm_update_${team}_${wlThreshold}_${mlThreshold}_${freemintThreshold}`)
+          .setCustomId(`confirm_wl_${team}_${threshold}`)
           .setLabel("Proceed with Update")
           .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
-          .setCustomId("cancel_update")
+          .setCustomId("cancel_wl_update")
           .setLabel("Cancel")
           .setStyle(ButtonStyle.Secondary)
       );
@@ -579,177 +646,206 @@ client.on("interactionCreate", async (interaction) => {
         components: [row],
       });
     } catch (error) {
-      console.error("Error in update simulation:", error);
-      await interaction.editReply("An error occurred while simulating role updates.");
+      console.error("Error in WL update simulation:", error);
+      await interaction.editReply("An error occurred while simulating WL role updates.");
     }
   }
-      // -------------------------------------------------------
-// /wankme
-// -------------------------------------------------------
-if (interaction.commandName === "wankme") {
-  const userId = interaction.user.id;
-  const uuid = v4();
 
-  // Check if user already has an account
-  const { data: userData } = await supabase
-    .from("users")
-    .select("*")
-    .eq("discord_id", userId)
-    .single();
-
-  if (userData) {
-    await interaction.reply({
-      content: `You have already linked your account. Your linked account: \`${maskAddress(userData.address)}\``,
-      ephemeral: true
-    });
-    return;
-  }
-
-  // Insert new token
-  const { error } = await supabase
-    .from("tokens")
-    .insert({ token: uuid, discord_id: userId, used: false })
-    .single();
-
-  if (error) {
-    console.error("Error inserting token:", error);
-    await interaction.reply({
-      content: "An error occurred while generating the token.",
-      ephemeral: true,
-    });
-    return;
-  }
-
-  // Generate verification link and assign role
-  const vercelUrl = `${process.env.VERCEL_URL}/game?token=${uuid}&discord=${userId}`;
-  
-  try {
-    const member = interaction.member as GuildMember;
-    const newRole = interaction.guild?.roles.cache.get(NEW_WANKME_ROLE_ID);
-    if (member && newRole && !member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
-      await member.roles.add(newRole);
+  // -------------------------------------------------------
+  // 2) /updateml
+  // -------------------------------------------------------
+  if (interaction.commandName === "updateml") {
+    if (!hasAdminRole(interaction.member)) {
+      return interaction.reply({
+        content: "You don't have permission to use this command.",
+        ephemeral: true,
+      });
     }
-  } catch (error) {
-    console.error("Error assigning new wankme role:", error);
+
+    await interaction.deferReply();
+    const guild = interaction.guild;
+    if (!guild) {
+      return interaction.editReply("Failed to simulate: Guild not found.");
+    }
+
+    const team = interaction.options.getString("team", true) as "winning" | "losing";
+    const threshold = interaction.options.getInteger("threshold", true);
+
+    try {
+      // Simulation
+      const simulationLog = await updateMoolalistRoles(
+        guild,
+        team,
+        threshold,
+        true // isSimulation
+      );
+
+      const simResultMsg = new EmbedBuilder()
+        .setColor(0x0099ff)
+        .setTitle("Moolalist Role Update Simulation")
+        .setDescription(
+          `**Here's what will happen if you proceed:**\n\n` +
+            `**Moolalist Role:**\n` +
+            `• ${simulationLog.added} users will receive the role\n` +
+            `• ${simulationLog.existing} users already have it\n\n` +
+            `Would you like to proceed with these changes?`
+        );
+
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`confirm_ml_${team}_${threshold}`)
+          .setLabel("Proceed with Update")
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId("cancel_ml_update")
+          .setLabel("Cancel")
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+      await interaction.editReply({
+        embeds: [simResultMsg],
+        components: [row],
+      });
+    } catch (error) {
+      console.error("Error in ML update simulation:", error);
+      await interaction.editReply("An error occurred while simulating ML role updates.");
+    }
   }
 
-  await interaction.reply({
-    content: `Hey ${interaction.user.username}, to link your Discord account to your address click this link:\n\n${vercelUrl}`,
-    ephemeral: true,
-  });
-}
-if (interaction.commandName === "alreadywanked") {
-  if (!hasAdminRole(interaction.member)) {
+  // -------------------------------------------------------
+  // 3) /updatefreemint
+  // -------------------------------------------------------
+  if (interaction.commandName === "updatefreemint") {
+    if (!hasAdminRole(interaction.member)) {
+      return interaction.reply({
+        content: "You don't have permission to use this command.",
+        ephemeral: true,
+      });
+    }
+
+    await interaction.deferReply();
+    const guild = interaction.guild;
+    if (!guild) {
+      return interaction.editReply("Failed to simulate: Guild not found.");
+    }
+
+    const team = interaction.options.getString("team", true) as "winning" | "losing";
+    const threshold = interaction.options.getInteger("threshold", true);
+
+    try {
+      // Simulation
+      const simulationLog = await updateFreeMintRoles(
+        guild,
+        team,
+        threshold,
+        true // isSimulation
+      );
+
+      const simResultMsg = new EmbedBuilder()
+        .setColor(0x0099ff)
+        .setTitle("Free Mint Role Update Simulation")
+        .setDescription(
+          `**Here's what will happen if you proceed:**\n\n` +
+            `**Free Mint Role:**\n` +
+            `• ${simulationLog.added} users will receive the role\n` +
+            `• ${simulationLog.existing} users already have it\n\n` +
+            `Would you like to proceed with these changes?`
+        );
+
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`confirm_fm_${team}_${threshold}`)
+          .setLabel("Proceed with Update")
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId("cancel_fm_update")
+          .setLabel("Cancel")
+          .setStyle(ButtonStyle.Secondary)
+      );
+
+      await interaction.editReply({
+        embeds: [simResultMsg],
+        components: [row],
+      });
+    } catch (error) {
+      console.error("Error in Free Mint update simulation:", error);
+      await interaction.editReply("An error occurred while simulating Free Mint role updates.");
+    }
+  }
+
+  // -------------------------------------------------------
+  // /alreadywanked (admin)
+  // -------------------------------------------------------
+  if (interaction.commandName === "alreadywanked") {
+    if (!hasAdminRole(interaction.member)) {
       await interaction.reply({
-          content: "You don't have permission to use this command.",
-          ephemeral: true,
+        content: "You don't have permission to use this command.",
+        ephemeral: true,
       });
       return;
-  }
+    }
 
-  await interaction.deferReply();
+    await interaction.deferReply();
 
-  try {
+    try {
+      const { data: verifiedUsers, error } = await supabase
+        .from("users")
+        .select("discord_id")
+        .not("address", "is", null);
+
+      if (error) throw error;
+
       const guild = interaction.guild;
       if (!guild) {
-          await interaction.editReply("Failed to find guild.");
-          return;
+        await interaction.editReply("Failed to find guild.");
+        return;
       }
 
       const newRole = guild.roles.cache.get(NEW_WANKME_ROLE_ID);
       if (!newRole) {
-          await interaction.editReply("Failed to find the new role.");
-          return;
+        await interaction.editReply("Failed to find the new role.");
+        return;
       }
 
       let addedCount = 0;
       let existingCount = 0;
       let errorCount = 0;
 
-      const bullRole = guild.roles.cache.get(BULL_ROLE_ID);
-      const bearRole = guild.roles.cache.get(BEAR_ROLE_ID);
-
-      if (!bullRole || !bearRole) {
-          await interaction.editReply("Failed to find Bull or Bear roles.");
-          return;
-      }
-
-      const allMembers = [...bullRole.members.values(), ...bearRole.members.values()];
-      const totalMembers = allMembers.length;
-      const BATCH_SIZE = 200;
-      const totalBatches = Math.ceil(totalMembers / BATCH_SIZE);
-
-      // Create a new message for updates to avoid token expiration
-      const statusMessage = await interaction.channel?.send({
-          content: "Starting role assignment process...",
-          embeds: []
-      });
-
-      for (let i = 0; i < allMembers.length; i += BATCH_SIZE) {
-          const batch = allMembers.slice(i, i + BATCH_SIZE);
-          const currentBatch = Math.floor(i / BATCH_SIZE) + 1;
-
-          try {
-              if (statusMessage) {
-                  await statusMessage.edit({
-                      content: `Processing Batch ${currentBatch}/${totalBatches}\n` +
-                              `Progress: ${i + batch.length}/${totalMembers}\n` +
-                              `Added: ${addedCount} | Existing: ${existingCount} | Errors: ${errorCount}`
-                  });
-              }
-          } catch (error) {
-              console.error("Failed to update status message, continuing process...");
+      for (const user of verifiedUsers) {
+        try {
+          const member = await guild.members.fetch(user.discord_id);
+          if (member) {
+            if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+              await member.roles.add(newRole);
+              addedCount++;
+            } else {
+              existingCount++;
+            }
           }
-
-          for (const member of batch) {
-              try {
-                  if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
-                      await member.roles.add(newRole);
-                      addedCount++;
-                  } else {
-                      existingCount++;
-                  }
-              } catch (err) {
-                  console.error(`Error processing member ${member.user.tag}:`, err);
-                  errorCount++;
-              }
-          }
-
-          await new Promise(resolve => setTimeout(resolve, 1500)); // Reduced delay
+        } catch (err) {
+          console.error(`Error processing user ${user.discord_id}:`, err);
+          errorCount++;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
 
       const resultEmbed = new EmbedBuilder()
-          .setColor(0x0099ff)
-          .setTitle("Already Wanked Role Assignment Complete")
-          .setDescription(
-              `**Final Results:**\n\n` +
-              `• ${addedCount} users received the new role\n` +
-              `• ${existingCount} users already had the role\n` +
-              `• ${errorCount} errors encountered\n\n` +
-              `Total members processed: ${totalMembers}\n` +
-              `Success rate: ${((addedCount + existingCount) / totalMembers * 100).toFixed(1)}%`
-          );
+        .setColor(0x0099ff)
+        .setTitle("Already Wanked Role Assignment Complete")
+        .setDescription(
+          `**Results:**\n\n` +
+            `• ${addedCount} users received the new role\n` +
+            `• ${existingCount} users already had the role\n` +
+            `• ${errorCount} errors encountered\n\n` +
+            `Total verified users processed: ${verifiedUsers.length}`
+        );
 
-      // Update final results in both places to ensure it's visible
-      if (statusMessage) {
-          await statusMessage.edit({ content: "", embeds: [resultEmbed] });
-      }
-      try {
-          await interaction.editReply({ embeds: [resultEmbed] });
-      } catch (error) {
-          console.error("Failed to update original reply, results shown in status message");
-      }
-
-  } catch (err) {
+      await interaction.editReply({ embeds: [resultEmbed] });
+    } catch (err) {
       console.error("Error in alreadywanked command:", err);
-      try {
-          await interaction.editReply("An error occurred while assigning roles to users.");
-      } catch {
-          await interaction.channel?.send("An error occurred while assigning roles to users.");
-      }
+      await interaction.editReply("An error occurred while assigning roles to verified users.");
+    }
   }
-}
-
 
   // -------------------------------------------------------
   // /purgezerobalance (admin)
@@ -1010,6 +1106,7 @@ if (interaction.commandName === "alreadywanked") {
       });
       return;
     }
+
     // Defer to avoid 3-second timeout
     await interaction.deferReply({ ephemeral: true });
 
@@ -1111,43 +1208,6 @@ if (interaction.commandName === "alreadywanked") {
       await interaction.reply("An error occurred while processing the fine command.");
     }
   }
-  // -------------------------------------------------------
-  // /reload (admin only)
-  // -------------------------------------------------------
-  if (interaction.commandName === "reload") {
-    if (!hasAdminRole(interaction.member)) {
-      await interaction.reply({
-        content: "You don't have permission to use this command.",
-        ephemeral: true,
-      });
-      return;
-    }
-
-    await interaction.deferReply({ ephemeral: true });
-    
-    try {
-        // Get the guild ID for the current server
-        const guildId = interaction.guildId;
-        if (!guildId) {
-            await interaction.editReply("Failed to get guild ID.");
-            return;
-        }
-
-        const rest = new REST({ version: "10" }).setToken(discordBotToken!);
-        
-        await interaction.editReply("Started refreshing application commands...");
-
-        await rest.put(
-            Routes.applicationGuildCommands(client.user!.id, guildId),
-            { body: commands }
-        );
-        
-        await interaction.editReply("Successfully reloaded all application commands! Changes should be visible immediately.");
-    } catch (error) {
-        console.error("Error refreshing commands:", error);
-        await interaction.editReply(`Failed to reload commands: ${error}`);
-    }
-}
 
   // -------------------------------------------------------
   // /updatewhitelistminimum (admin only)
@@ -1292,8 +1352,13 @@ if (interaction.commandName === "alreadywanked") {
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isButton()) return;
 
-  // Cancel
-  if (interaction.customId === "cancel_update") {
+  // CANCEL BUTTONS
+  // e.g., "cancel_wl_update", "cancel_ml_update", "cancel_fm_update"
+  if (
+    interaction.customId === "cancel_wl_update" ||
+    interaction.customId === "cancel_ml_update" ||
+    interaction.customId === "cancel_fm_update"
+  ) {
     await interaction.update({
       content: "Role update cancelled.",
       embeds: [],
@@ -1302,44 +1367,111 @@ client.on("interactionCreate", async (interaction) => {
     return;
   }
 
-  // Confirm
-  if (interaction.customId.startsWith("confirm_update_")) {
+  // CONFIRM WL
+  if (interaction.customId.startsWith("confirm_wl_")) {
     if (!hasAdminRole(interaction.member)) {
-      await interaction.reply({
+      return interaction.reply({
         content: "You don't have permission to confirm this action.",
         ephemeral: true,
       });
-      return;
     }
 
-    const [, , team, wl, ml, freemint] = interaction.customId.split("_");
-
+    const [, , team, threshold] = interaction.customId.split("_");
     await interaction.update({
-      content: "Executing role updates...",
+      content: "Executing whitelist role updates...",
       embeds: [],
       components: [],
     });
 
     try {
-      const roleUpdateLog = await updateRoles(
+      const roleUpdateLog = await updateWhitelistRoles(
         interaction.guild!,
         team as "winning" | "losing",
-        parseInt(wl),
-        parseInt(ml),
-        parseInt(freemint),
+        parseInt(threshold),
         false
       );
 
       await interaction.editReply(
-        `Role updates completed!\n\n` +
+        `Whitelist role updates completed!\n\n` +
           `**Results:**\n` +
-          `• Whitelist: ${roleUpdateLog.whitelist.added} added (${roleUpdateLog.whitelist.existing} existing)\n` +
-          `• Moolalist: ${roleUpdateLog.moolalist.added} added (${roleUpdateLog.moolalist.existing} existing)\n` +
-          `• Free Mint: ${roleUpdateLog.freemint.added} added (${roleUpdateLog.freemint.existing} existing)\n`
+          `• ${roleUpdateLog.added} roles added\n` +
+          `• ${roleUpdateLog.existing} users already had the role\n`
       );
     } catch (error) {
-      console.error("Error executing role updates:", error);
-      await interaction.editReply("An error occurred while updating roles.");
+      console.error("Error executing WL role updates:", error);
+      await interaction.editReply("An error occurred while updating whitelist roles.");
+    }
+  }
+
+  // CONFIRM ML
+  if (interaction.customId.startsWith("confirm_ml_")) {
+    if (!hasAdminRole(interaction.member)) {
+      return interaction.reply({
+        content: "You don't have permission to confirm this action.",
+        ephemeral: true,
+      });
+    }
+
+    const [, , team, threshold] = interaction.customId.split("_");
+    await interaction.update({
+      content: "Executing moolalist role updates...",
+      embeds: [],
+      components: [],
+    });
+
+    try {
+      const roleUpdateLog = await updateMoolalistRoles(
+        interaction.guild!,
+        team as "winning" | "losing",
+        parseInt(threshold),
+        false
+      );
+
+      await interaction.editReply(
+        `Moolalist role updates completed!\n\n` +
+          `**Results:**\n` +
+          `• ${roleUpdateLog.added} roles added\n` +
+          `• ${roleUpdateLog.existing} users already had the role\n`
+      );
+    } catch (error) {
+      console.error("Error executing ML role updates:", error);
+      await interaction.editReply("An error occurred while updating moolalist roles.");
+    }
+  }
+
+  // CONFIRM FREE MINT
+  if (interaction.customId.startsWith("confirm_fm_")) {
+    if (!hasAdminRole(interaction.member)) {
+      return interaction.reply({
+        content: "You don't have permission to confirm this action.",
+        ephemeral: true,
+      });
+    }
+
+    const [, , team, threshold] = interaction.customId.split("_");
+    await interaction.update({
+      content: "Executing free mint role updates...",
+      embeds: [],
+      components: [],
+    });
+
+    try {
+      const roleUpdateLog = await updateFreeMintRoles(
+        interaction.guild!,
+        team as "winning" | "losing",
+        parseInt(threshold),
+        false
+      );
+
+      await interaction.editReply(
+        `Free Mint role updates completed!\n\n` +
+          `**Results:**\n` +
+          `• ${roleUpdateLog.added} roles added\n` +
+          `• ${roleUpdateLog.existing} users already had the role\n`
+      );
+    } catch (error) {
+      console.error("Error executing Free Mint role updates:", error);
+      await interaction.editReply("An error occurred while updating free mint roles.");
     }
   }
 
@@ -1455,31 +1587,10 @@ client.on("interactionCreate", async (interaction) => {
  *                GUILD MEMBER ADD EVENT
  ********************************************************************/
 client.on("guildMemberAdd", async (member) => {
-  // First add Mootard role as before
   const mootardRole = member.guild.roles.cache.get(MOOTARD_ROLE_ID);
   if (mootardRole) {
     await member.roles.add(mootardRole);
     console.log(`Added Mootard role to new member: ${member.user.tag}`);
-  }
-
-  // Check if they were previously verified
-  try {
-    const { data: userData, error } = await supabase
-      .from("users")
-      .select("*")
-      .eq("discord_id", member.id)
-      .single();
-
-    // If they have an address in database, they were verified
-    if (userData && userData.address) {
-      const wankmeRole = member.guild.roles.cache.get(NEW_WANKME_ROLE_ID);
-      if (wankmeRole && !member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
-        await member.roles.add(wankmeRole);
-        console.log(`Restored wankme role for returning verified user: ${member.user.tag}`);
-      }
-    }
-  } catch (error) {
-    console.error(`Error checking verification status for new member ${member.user.tag}:`, error);
   }
 });
 
