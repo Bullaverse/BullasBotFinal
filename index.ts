@@ -565,33 +565,48 @@ const commands = [
 client.once("ready", async () => {
   console.log("Bot is ready!");
   client.user?.setPresence({
-    status: 'online',
+    status: "online",
     activities: [
       {
-        name: 'Moola war',
+        name: "Moola war",
         type: 0, // "Playing"
       },
     ],
   });
 
-  // Register slash commands
   const rest = new REST({ version: "10" }).setToken(discordBotToken!);
-  try {
-    // First, remove all existing commands
-    console.log("Started removing old commands...");
-    await rest.put(Routes.applicationCommands(client.user!.id), { body: [] });
-    console.log("Successfully removed old commands.");
 
-    // Then, register new commands
-    console.log("Started refreshing application (/) commands.");
-    await rest.put(Routes.applicationCommands(client.user!.id), {
-      body: commands,
-    });
-    console.log("Successfully reloaded application (/) commands.");
+  // Replace with your actual server (guild) ID
+  const GUILD_ID = "1228994421966766141";
+
+  try {
+    // 1) Clear ALL global commands
+    console.log("Removing ALL global commands...");
+    await rest.put(Routes.applicationCommands(client.user!.id), { body: [] });
+    console.log("Global commands cleared.");
+
+    // 2) Clear GUILD commands in your single server
+    console.log(`Removing ALL guild commands in server ${GUILD_ID}...`);
+    await rest.put(
+      Routes.applicationGuildCommands(client.user!.id, GUILD_ID),
+      { body: [] }
+    );
+    console.log("Guild commands cleared.");
+
+    // 3) Re-register commands in YOUR server only
+    console.log(`Registering commands in guild ${GUILD_ID}...`);
+    await rest.put(
+      Routes.applicationGuildCommands(client.user!.id, GUILD_ID),
+      { body: commands }
+    );
+    console.log("Guild commands registered successfully!");
+
+    console.log("Done! No more duplicates should remain.");
   } catch (error) {
-    console.error("Error refreshing application (/) commands:", error);
+    console.error("Error clearing or registering commands:", error);
   }
 });
+
 
 /********************************************************************
  *                MAIN INTERACTION HANDLER
@@ -857,40 +872,45 @@ client.on("interactionCreate", async (interaction) => {
   }
   //wankme
   if (interaction.commandName === "wankme") {
-    await interaction.deferReply();
     const userId = interaction.user.id;
-  
-    try {
-      const { data: existingUser } = await supabase
-        .from("users")
-        .select("*")
-        .eq("discord_id", userId)
-        .single();
-  
-      if (existingUser) {
-        await interaction.editReply("You have already initiated your wankme journey!");
+    const uuid = v4();
+
+    const { data: userData } = await supabase
+      .from("users")
+      .select("*")
+      .eq("discord_id", userId)
+      .single();
+
+      if (userData) {
+        await interaction.reply({
+          content: `You have already linked your account. Your linked account: \`${maskAddress(userData.address)}\``,
+          ephemeral: true
+        });
         return;
       }
-  
-      const uuid = v4();
-      const { error: tokenError } = await supabase
-        .from("tokens")
-        .insert({ token: uuid, discord_id: userId, used: false })
-        .single();
-  
-      if (tokenError) {
-        console.error("Error creating token:", tokenError);
-        await interaction.editReply("An error occurred while generating your token.");
-        return;
-      }
-  
-      const vercelUrl = `${process.env.VERCEL_URL}/wankme?token=${uuid}&discord=${userId}`;
-      await interaction.editReply(
-        `Hey ${interaction.user.username}, click this link to get started:\n\n${vercelUrl}`
-      );
-    } catch (error) {
-      console.error("Error in wankme command:", error);
-      await interaction.editReply("An error occurred while processing your request.");
+
+    const { data, error } = await supabase
+      .from("tokens")
+      .insert({ token: uuid, discord_id: userId, used: false })
+      .single();
+
+    const embed = new EmbedBuilder()
+      .setColor(0x0099ff)
+      .setTitle("Some title")
+      .setDescription("Some description");
+
+    if (error) {
+      console.error("Error inserting token:", error);
+      await interaction.reply({
+        content: "An error occurred while generating the token.",
+        ephemeral: true,
+      });
+    } else {
+      const vercelUrl = `${process.env.VERCEL_URL}/game?token=${uuid}&discord=${userId}`;
+      await interaction.reply({
+        content: `Hey ${interaction.user.username}, to link your Discord account to your address click this link: \n\n${vercelUrl} `,
+        ephemeral: true,
+      });
     }
   }
   // -------------------------------------------------------
