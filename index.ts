@@ -68,6 +68,50 @@ process.on('unhandledRejection', (error) => {
   console.error('Unhandled promise rejection:', error);
 });
 
+supabase
+    .channel('users-insert-channel')
+    .on('postgres_changes', 
+        { 
+            event: 'INSERT', 
+            schema: 'public', 
+            table: 'users'
+        }, 
+        async (payload) => {
+            if (!payload.new?.discord_id) return;
+
+            try {
+                const guild = client.guilds.cache.get("1228994421966766141");
+                if (!guild) {
+                    console.error('Guild not found');
+                    return;
+                }
+
+                const member = await guild.members.fetch(payload.new.discord_id);
+                if (!member) {
+                    console.error(`Member ${payload.new.discord_id} not found`);
+                    return;
+                }
+
+                // Add NEW_WANKME_ROLE
+                const newRole = guild.roles.cache.get(NEW_WANKME_ROLE_ID);
+                if (newRole && !member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+                    await member.roles.add(newRole);
+                    console.log(`Added NEW_WANKME_ROLE to user ${payload.new.discord_id}`);
+                }
+
+                // Remove MOOTARD_ROLE
+                const mootardRole = guild.roles.cache.get(MOOTARD_ROLE_ID);
+                if (mootardRole && member.roles.cache.has(MOOTARD_ROLE_ID)) {
+                    await member.roles.remove(mootardRole);
+                    console.log(`Removed MOOTARD_ROLE from user ${payload.new.discord_id}`);
+                }
+            } catch (error) {
+                console.error('Error updating roles after verification:', error);
+            }
+        }
+    )
+    .subscribe();
+
 /********************************************************************
  *                     ROLE CONSTANTS
  ********************************************************************/
@@ -109,7 +153,36 @@ export const maskAddress = (address: string) => {
   if (!address || address.length < 8) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 };
+/** Helper function to fetch all users with pagination */
+async function fetchAllEligibleUsers(team: string, threshold: number) {
+  let allUsers = [];
+  let page = 0;
+  const PAGE_SIZE = 1000; // Supabase maximum limit
+  
+  while (true) {
+    const { data, error } = await supabase
+      .from("users")
+      .select("discord_id, points, team")
+      .eq("team", team)
+      .gte("points", threshold)
+      .order("points", { ascending: false })
+      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
+    if (error) {
+      console.error("Error fetching users:", error);
+      break;
+    }
+
+    if (!data || data.length === 0) break;
+    
+    allUsers.push(...data);
+    if (data.length < PAGE_SIZE) break;
+    
+    page++;
+  }
+
+  return allUsers;
+}
 /********************************************************************
  *              TEAM POINTS & TOP PLAYERS HELPERS
  ********************************************************************/
@@ -148,7 +221,8 @@ async function updateWhitelistRoles(
 
   let roleUpdateLog = {
     added: 0,
-    existing: 0
+    existing: 0,
+    total: 0
   };
 
   const whitelistRole = guild.roles.cache.get(WHITELIST_ROLE_ID);
@@ -159,37 +233,49 @@ async function updateWhitelistRoles(
     return roleUpdateLog;
   }
 
+  // Get team points to determine winning team
   const teamPoints = await getTeamPoints();
   const winningTeam = teamPoints.bullas > teamPoints.beras ? "bullas" : "beras";
   const targetTeam = teamType === "winning" ? winningTeam : winningTeam === "bullas" ? "beras" : "bullas";
 
-  const { data: players, error } = await supabase
-    .from("users")
-    .select("discord_id, points, team")
-    .eq("team", targetTeam);
+  console.log(`Target team: ${targetTeam}, Threshold: ${threshold}`);
 
-  if (error) {
-    console.error("Error fetching players:", error);
-    return roleUpdateLog;
-  }
+  // Fetch all eligible users with pagination
+  const players = await fetchAllEligibleUsers(targetTeam, threshold);
+  roleUpdateLog.total = players.length;
+  console.log(`Found ${roleUpdateLog.total} eligible players`);
 
-  for (const player of players) {
-    if (player.discord_id) {
+  // Process in batches to avoid rate limits
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < players.length; i += BATCH_SIZE) {
+    const batch = players.slice(i, Math.min(i + BATCH_SIZE, players.length));
+    
+    for (const player of batch) {
+      if (!player.discord_id) continue;
+
       try {
         const member = await guild.members.fetch(player.discord_id);
-        if (member && player.points >= threshold) {
-          if (!member.roles.cache.has(WHITELIST_ROLE_ID) && !member.roles.cache.has(WL_WINNER_ROLE_ID)) {
-            if (!isSimulation) {
-              await member.roles.add(whitelistRole);
-            }
-            roleUpdateLog.added++;
-          } else {
-            roleUpdateLog.existing++;
+        if (!member) continue;
+
+        const hasWLRole = member.roles.cache.has(WHITELIST_ROLE_ID);
+        const hasWLWinnerRole = member.roles.cache.has(WL_WINNER_ROLE_ID);
+
+        if (!hasWLRole && !hasWLWinnerRole) {
+          if (!isSimulation) {
+            await member.roles.add(whitelistRole);
           }
+          roleUpdateLog.added++;
+        } else {
+          roleUpdateLog.existing++;
         }
       } catch (err) {
-        console.error(`Error ${isSimulation ? 'simulating' : 'updating'} WL role for user ${player.discord_id}:`, err);
+        console.error(`Error processing user ${player.discord_id}:`, err);
       }
+    }
+
+    // Add delay between batches if not simulating
+    if (!isSimulation) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
 
@@ -206,7 +292,8 @@ async function updateMoolalistRoles(
 
   let roleUpdateLog = {
     added: 0,
-    existing: 0
+    existing: 0,
+    total: 0
   };
 
   const moolalistRole = guild.roles.cache.get(MOOLALIST_ROLE_ID);
@@ -221,33 +308,42 @@ async function updateMoolalistRoles(
   const winningTeam = teamPoints.bullas > teamPoints.beras ? "bullas" : "beras";
   const targetTeam = teamType === "winning" ? winningTeam : winningTeam === "bullas" ? "beras" : "bullas";
 
-  const { data: players, error } = await supabase
-    .from("users")
-    .select("discord_id, points, team")
-    .eq("team", targetTeam);
+  console.log(`Target team: ${targetTeam}, Threshold: ${threshold}`);
 
-  if (error) {
-    console.error("Error fetching players:", error);
-    return roleUpdateLog;
-  }
+  // Fetch all eligible users with pagination
+  const players = await fetchAllEligibleUsers(targetTeam, threshold);
+  roleUpdateLog.total = players.length;
+  console.log(`Found ${roleUpdateLog.total} eligible players`);
 
-  for (const player of players) {
-    if (player.discord_id) {
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < players.length; i += BATCH_SIZE) {
+    const batch = players.slice(i, Math.min(i + BATCH_SIZE, players.length));
+    
+    for (const player of batch) {
+      if (!player.discord_id) continue;
+
       try {
         const member = await guild.members.fetch(player.discord_id);
-        if (member && player.points >= threshold) {
-          if (!member.roles.cache.has(MOOLALIST_ROLE_ID) && !member.roles.cache.has(ML_WINNER_ROLE_ID)) {
-            if (!isSimulation) {
-              await member.roles.add(moolalistRole);
-            }
-            roleUpdateLog.added++;
-          } else {
-            roleUpdateLog.existing++;
+        if (!member) continue;
+
+        const hasMLRole = member.roles.cache.has(MOOLALIST_ROLE_ID);
+        const hasMLWinnerRole = member.roles.cache.has(ML_WINNER_ROLE_ID);
+
+        if (!hasMLRole && !hasMLWinnerRole) {
+          if (!isSimulation) {
+            await member.roles.add(moolalistRole);
           }
+          roleUpdateLog.added++;
+        } else {
+          roleUpdateLog.existing++;
         }
       } catch (err) {
-        console.error(`Error ${isSimulation ? 'simulating' : 'updating'} ML role for user ${player.discord_id}:`, err);
+        console.error(`Error processing user ${player.discord_id}:`, err);
       }
+    }
+
+    if (!isSimulation) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
 
@@ -264,7 +360,8 @@ async function updateFreeMintRoles(
 
   let roleUpdateLog = {
     added: 0,
-    existing: 0
+    existing: 0,
+    total: 0
   };
 
   const freeMintRole = guild.roles.cache.get(FREE_MINT_ROLE_ID);
@@ -279,33 +376,42 @@ async function updateFreeMintRoles(
   const winningTeam = teamPoints.bullas > teamPoints.beras ? "bullas" : "beras";
   const targetTeam = teamType === "winning" ? winningTeam : winningTeam === "bullas" ? "beras" : "bullas";
 
-  const { data: players, error } = await supabase
-    .from("users")
-    .select("discord_id, points, team")
-    .eq("team", targetTeam);
+  console.log(`Target team: ${targetTeam}, Threshold: ${threshold}`);
 
-  if (error) {
-    console.error("Error fetching players:", error);
-    return roleUpdateLog;
-  }
+  // Fetch all eligible users with pagination
+  const players = await fetchAllEligibleUsers(targetTeam, threshold);
+  roleUpdateLog.total = players.length;
+  console.log(`Found ${roleUpdateLog.total} eligible players`);
 
-  for (const player of players) {
-    if (player.discord_id) {
+  const BATCH_SIZE = 10;
+  for (let i = 0; i < players.length; i += BATCH_SIZE) {
+    const batch = players.slice(i, Math.min(i + BATCH_SIZE, players.length));
+    
+    for (const player of batch) {
+      if (!player.discord_id) continue;
+
       try {
         const member = await guild.members.fetch(player.discord_id);
-        if (member && player.points >= threshold) {
-          if (!member.roles.cache.has(FREE_MINT_ROLE_ID) && !member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID)) {
-            if (!isSimulation) {
-              await member.roles.add(freeMintRole);
-            }
-            roleUpdateLog.added++;
-          } else {
-            roleUpdateLog.existing++;
+        if (!member) continue;
+
+        const hasFMRole = member.roles.cache.has(FREE_MINT_ROLE_ID);
+        const hasFMWinnerRole = member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID);
+
+        if (!hasFMRole && !hasFMWinnerRole) {
+          if (!isSimulation) {
+            await member.roles.add(freeMintRole);
           }
+          roleUpdateLog.added++;
+        } else {
+          roleUpdateLog.existing++;
         }
       } catch (err) {
-        console.error(`Error ${isSimulation ? 'simulating' : 'updating'} Free Mint role for user ${player.discord_id}:`, err);
+        console.error(`Error processing user ${player.discord_id}:`, err);
       }
+    }
+
+    if (!isSimulation) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
   }
 
@@ -876,43 +982,38 @@ client.on("interactionCreate", async (interaction) => {
     const uuid = v4();
 
     const { data: userData } = await supabase
-      .from("users")
-      .select("*")
-      .eq("discord_id", userId)
-      .single();
+        .from("users")
+        .select("*")
+        .eq("discord_id", userId)
+        .single();
 
-      if (userData) {
+    if (userData) {
         await interaction.reply({
-          content: `You have already linked your account. Your linked account: \`${maskAddress(userData.address)}\``,
-          ephemeral: true
+            content: `You have already linked your account. Your linked account: \`${maskAddress(userData.address)}\``,
+            ephemeral: true
         });
         return;
-      }
+    }
 
-    const { data, error } = await supabase
-      .from("tokens")
-      .insert({ token: uuid, discord_id: userId, used: false })
-      .single();
-
-    const embed = new EmbedBuilder()
-      .setColor(0x0099ff)
-      .setTitle("Some title")
-      .setDescription("Some description");
+    const { error } = await supabase
+        .from("tokens")
+        .insert({ token: uuid, discord_id: userId, used: false })
+        .single();
 
     if (error) {
-      console.error("Error inserting token:", error);
-      await interaction.reply({
-        content: "An error occurred while generating the token.",
-        ephemeral: true,
-      });
+        console.error("Error inserting token:", error);
+        await interaction.reply({
+            content: "An error occurred while generating the token.",
+            ephemeral: true,
+        });
     } else {
-      const vercelUrl = `${process.env.VERCEL_URL}/game?token=${uuid}&discord=${userId}`;
-      await interaction.reply({
-        content: `Hey ${interaction.user.username}, to link your Discord account to your address click this link: \n\n${vercelUrl} `,
-        ephemeral: true,
-      });
+        const vercelUrl = `${process.env.VERCEL_URL}/game?token=${uuid}&discord=${userId}`;
+        await interaction.reply({
+            content: `Hey ${interaction.user.username}, to link your Discord account to your address click this link:\n\n${vercelUrl}`,
+            ephemeral: true,
+        });
     }
-  }
+}
   // -------------------------------------------------------
   // /purgezerobalance (admin)
   // -------------------------------------------------------
