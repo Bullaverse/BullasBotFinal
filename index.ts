@@ -68,61 +68,6 @@ process.on('unhandledRejection', (error) => {
   console.error('Unhandled promise rejection:', error);
 });
 
-const subscription = supabase
-    .channel('users-insert-channel')
-    .on('postgres_changes', 
-        { 
-            event: 'INSERT', 
-            schema: 'public', 
-            table: 'users'
-        }, 
-        async (payload) => {
-            console.log("🔔 Received new user insert:", payload); // Added emoji for visibility
-
-            if (!payload.new?.discord_id) {
-                console.log("❌ No discord_id in payload, skipping");
-                return;
-            }
-
-            try {
-                console.log("🔍 Attempting to fetch guild");
-                const guild = client.guilds.cache.get("1228994421966766141");
-                if (!guild) {
-                    console.error('❌ Guild not found');
-                    return;
-                }
-
-                console.log("🔍 Attempting to fetch member");
-                const member = await guild.members.fetch(payload.new.discord_id);
-                if (!member) {
-                    console.error(`❌ Member ${payload.new.discord_id} not found`);
-                    return;
-                }
-
-                console.log("✅ Found member, checking roles");
-
-                // Add NEW_WANKME_ROLE
-                const newRole = guild.roles.cache.get(NEW_WANKME_ROLE_ID);
-                if (newRole && !member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
-                    await member.roles.add(newRole);
-                    console.log(`✅ Added NEW_WANKME_ROLE to user ${payload.new.discord_id}`);
-                }
-
-                // Remove MOOTARD_ROLE
-                const mootardRole = guild.roles.cache.get(MOOTARD_ROLE_ID);
-                if (mootardRole && member.roles.cache.has(MOOTARD_ROLE_ID)) {
-                    await member.roles.remove(mootardRole);
-                    console.log(`✅ Removed MOOTARD_ROLE from user ${payload.new.discord_id}`);
-                }
-            } catch (error) {
-                console.error('❌ Error updating roles after verification:', error);
-            }
-        }
-    )
-    .subscribe();
-
-//  subscription status log
-console.log("Initial subscription status:", subscription.state);
 
 /********************************************************************
  *                     ROLE CONSTANTS
@@ -682,7 +627,6 @@ const commands = [
  ********************************************************************/
 client.once("ready", async () => {
   console.log("Bot is ready!");
-  console.log("Supabase realtime connection status:", supabase.channel('users-insert-channel').state);
   client.user?.setPresence({
     status: "online",
     activities: [
@@ -1019,13 +963,57 @@ client.on("interactionCreate", async (interaction) => {
             content: "An error occurred while generating the token.",
             ephemeral: true,
         });
-    } else {
-        const vercelUrl = `${process.env.VERCEL_URL}/game?token=${uuid}&discord=${userId}`;
-        await interaction.reply({
-            content: `Hey ${interaction.user.username}, to link your Discord account to your address click this link:\n\n${vercelUrl}`,
-            ephemeral: true,
-        });
+        return;
     }
+
+    const vercelUrl = `${process.env.VERCEL_URL}/game?token=${uuid}&discord=${userId}`;
+    await interaction.reply({
+        content: `Hey ${interaction.user.username}, to link your Discord account to your address click this link:\n\n${vercelUrl}`,
+        ephemeral: true,
+    });
+
+    // Start watching for verification
+    const checkInterval = setInterval(async () => {
+        const { data: checkUser } = await supabase
+            .from("users")
+            .select("*")
+            .eq("discord_id", userId)
+            .single();
+
+        if (checkUser) {
+            clearInterval(checkInterval); // Stop checking once verified
+            try {
+                const member = interaction.member as GuildMember;
+                
+                // Add NEW_WANKME_ROLE
+                const newRole = interaction.guild?.roles.cache.get(NEW_WANKME_ROLE_ID);
+                if (member && newRole && !member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+                    await member.roles.add(newRole);
+                    console.log(`Added NEW_WANKME_ROLE to user ${userId}`);
+                }
+
+                // Remove MOOTARD_ROLE
+                const mootardRole = interaction.guild?.roles.cache.get(MOOTARD_ROLE_ID);
+                if (member && mootardRole && member.roles.cache.has(MOOTARD_ROLE_ID)) {
+                    await member.roles.remove(mootardRole);
+                    console.log(`Removed MOOTARD_ROLE from user ${userId}`);
+                }
+
+                // Send a followup message
+                await interaction.followUp({
+                    content: "✅ Verification complete! Your roles have been updated.",
+                    ephemeral: true
+                });
+            } catch (error) {
+                console.error('Error updating roles:', error);
+            }
+        }
+    }, 5000); // Check every 5 seconds
+
+    // Stop checking after 5 minutes
+    setTimeout(() => {
+        clearInterval(checkInterval);
+    }, 300000);
 }
   // -------------------------------------------------------
   // /purgezerobalance (admin)
