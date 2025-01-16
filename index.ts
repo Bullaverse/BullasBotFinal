@@ -77,20 +77,29 @@ supabase
             table: 'users'
         }, 
         async (payload) => {
-            if (!payload.new?.discord_id) return;
+            console.log("Received new user insert:", payload); // Add this log
+
+            if (!payload.new?.discord_id) {
+                console.log("No discord_id in payload, skipping"); // Add this log
+                return;
+            }
 
             try {
+                console.log("Attempting to fetch guild"); // Add this log
                 const guild = client.guilds.cache.get("1228994421966766141");
                 if (!guild) {
                     console.error('Guild not found');
                     return;
                 }
 
+                console.log("Attempting to fetch member"); // Add this log
                 const member = await guild.members.fetch(payload.new.discord_id);
                 if (!member) {
                     console.error(`Member ${payload.new.discord_id} not found`);
                     return;
                 }
+
+                console.log("Found member, checking roles"); // Add this log
 
                 // Add NEW_WANKME_ROLE
                 const newRole = guild.roles.cache.get(NEW_WANKME_ROLE_ID);
@@ -110,7 +119,9 @@ supabase
             }
         }
     )
-    .subscribe();
+    .subscribe((status) => {
+        console.log("Subscription status:", status); // Add this log
+    });
 
 /********************************************************************
  *                     ROLE CONSTANTS
@@ -670,6 +681,7 @@ const commands = [
  ********************************************************************/
 client.once("ready", async () => {
   console.log("Bot is ready!");
+  console.log("Active Supabase subscriptions:", supabase.getSubscriptions()); 
   client.user?.setPresence({
     status: "online",
     activities: [
