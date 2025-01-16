@@ -875,12 +875,13 @@ client.on("interactionCreate", async (interaction) => {
     await interaction.deferReply();
 
     try {
-      const { data: verifiedUsers, error } = await supabase
-        .from("users")
-        .select("discord_id")
-        .not("address", "is", null);
-
-      if (error) throw error;
+      // Fetch users in smaller chunks to avoid Supabase limits
+      let processedTotal = 0;
+      let totalAdded = 0;
+      let totalExisting = 0;
+      let totalErrors = 0;
+      let hasMore = true;
+      const chunkSize = 1000; // Supabase pagination size
 
       const guild = interaction.guild;
       if (!guild) {
@@ -894,40 +895,83 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
 
-      let addedCount = 0;
-      let existingCount = 0;
-      let errorCount = 0;
+      while (hasMore) {
+        // Fetch next chunk of users
+        const { data: verifiedUsers, error } = await supabase
+          .from("users")
+          .select("discord_id")
+          .not("address", "is", null)
+          .range(processedTotal, processedTotal + chunkSize - 1)
+          .order('discord_id', { ascending: true });
 
-      for (const user of verifiedUsers) {
-        try {
-          const member = await guild.members.fetch(user.discord_id);
-          if (member) {
-            if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
-              await member.roles.add(newRole);
-              addedCount++;
-            } else {
-              existingCount++;
-            }
-          }
-        } catch (err) {
-          console.error(`Error processing user ${user.discord_id}:`, err);
-          errorCount++;
+        if (error) throw error;
+        if (!verifiedUsers || verifiedUsers.length === 0) {
+          hasMore = false;
+          continue;
         }
-        await new Promise((resolve) => setTimeout(resolve, 100));
+
+        // Process users in smaller batches to avoid rate limits
+        const batchSize = 100;
+        for (let i = 0; i < verifiedUsers.length; i += batchSize) {
+          const batch = verifiedUsers.slice(i, i + batchSize);
+          
+          for (const user of batch) {
+            if (!user?.discord_id) {
+              totalErrors++;
+              continue;
+            }
+
+            try {
+              const member = await guild.members.fetch(user.discord_id).catch(() => null);
+              
+              if (member) {
+                if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+                  await member.roles.add(newRole);
+                  totalAdded++;
+                } else {
+                  totalExisting++;
+                }
+              } else {
+                totalErrors++;
+              }
+            } catch (err) {
+              console.error(`Error processing user ${user.discord_id}:`, err);
+              totalErrors++;
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+
+          processedTotal += batch.length;
+
+          // Update progress every 100 users
+          const progressEmbed = new EmbedBuilder()
+            .setColor(0x0099ff)
+            .setTitle("Already Wanked Role Assignment Progress")
+            .setDescription(
+              `**Progress:**\n\n` +
+              `• ${totalAdded} users received the new role\n` +
+              `• ${totalExisting} users already had the role\n` +
+              `• ${totalErrors} errors encountered\n\n` +
+              `Processed ${processedTotal} users so far`
+            );
+
+          await interaction.editReply({ embeds: [progressEmbed] });
+        }
       }
 
-      const resultEmbed = new EmbedBuilder()
+      const finalEmbed = new EmbedBuilder()
         .setColor(0x0099ff)
         .setTitle("Already Wanked Role Assignment Complete")
         .setDescription(
-          `**Results:**\n\n` +
-            `• ${addedCount} users received the new role\n` +
-            `• ${existingCount} users already had the role\n` +
-            `• ${errorCount} errors encountered\n\n` +
-            `Total verified users processed: ${verifiedUsers.length}`
+          `**Final Results:**\n\n` +
+          `• ${totalAdded} users received the new role\n` +
+          `• ${totalExisting} users already had the role\n` +
+          `• ${totalErrors} errors encountered\n\n` +
+          `Total users processed: ${processedTotal}`
         );
 
-      await interaction.editReply({ embeds: [resultEmbed] });
+      await interaction.editReply({ embeds: [finalEmbed] });
+
     } catch (err) {
       console.error("Error in alreadywanked command:", err);
       await interaction.editReply("An error occurred while assigning roles to verified users.");
