@@ -68,7 +68,7 @@ process.on('unhandledRejection', (error) => {
   console.error('Unhandled promise rejection:', error);
 });
 
-supabase
+const subscription = supabase
     .channel('users-insert-channel')
     .on('postgres_changes', 
         { 
@@ -77,51 +77,52 @@ supabase
             table: 'users'
         }, 
         async (payload) => {
-            console.log("Received new user insert:", payload); // Add this log
+            console.log("🔔 Received new user insert:", payload); // Added emoji for visibility
 
             if (!payload.new?.discord_id) {
-                console.log("No discord_id in payload, skipping"); // Add this log
+                console.log("❌ No discord_id in payload, skipping");
                 return;
             }
 
             try {
-                console.log("Attempting to fetch guild"); // Add this log
+                console.log("🔍 Attempting to fetch guild");
                 const guild = client.guilds.cache.get("1228994421966766141");
                 if (!guild) {
-                    console.error('Guild not found');
+                    console.error('❌ Guild not found');
                     return;
                 }
 
-                console.log("Attempting to fetch member"); // Add this log
+                console.log("🔍 Attempting to fetch member");
                 const member = await guild.members.fetch(payload.new.discord_id);
                 if (!member) {
-                    console.error(`Member ${payload.new.discord_id} not found`);
+                    console.error(`❌ Member ${payload.new.discord_id} not found`);
                     return;
                 }
 
-                console.log("Found member, checking roles"); // Add this log
+                console.log("✅ Found member, checking roles");
 
                 // Add NEW_WANKME_ROLE
                 const newRole = guild.roles.cache.get(NEW_WANKME_ROLE_ID);
                 if (newRole && !member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
                     await member.roles.add(newRole);
-                    console.log(`Added NEW_WANKME_ROLE to user ${payload.new.discord_id}`);
+                    console.log(`✅ Added NEW_WANKME_ROLE to user ${payload.new.discord_id}`);
                 }
 
                 // Remove MOOTARD_ROLE
                 const mootardRole = guild.roles.cache.get(MOOTARD_ROLE_ID);
                 if (mootardRole && member.roles.cache.has(MOOTARD_ROLE_ID)) {
                     await member.roles.remove(mootardRole);
-                    console.log(`Removed MOOTARD_ROLE from user ${payload.new.discord_id}`);
+                    console.log(`✅ Removed MOOTARD_ROLE from user ${payload.new.discord_id}`);
                 }
             } catch (error) {
-                console.error('Error updating roles after verification:', error);
+                console.error('❌ Error updating roles after verification:', error);
             }
         }
     )
-    .subscribe((status) => {
-        console.log("Subscription status:", status); // Add this log
-    });
+    .subscribe();
+
+//  subscription status log
+console.log("Initial subscription status:", subscription.state);
 
 /********************************************************************
  *                     ROLE CONSTANTS
@@ -681,7 +682,7 @@ const commands = [
  ********************************************************************/
 client.once("ready", async () => {
   console.log("Bot is ready!");
-  console.log("Active Supabase subscriptions:", supabase.getSubscriptions()); 
+  console.log("Supabase realtime connection status:", supabase.channel('users-insert-channel').state);
   client.user?.setPresence({
     status: "online",
     activities: [
