@@ -872,31 +872,30 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    await interaction.deferReply();
+    await interaction.reply("Starting role assignment process...");
+    let lastInteractionTime = Date.now();
 
     try {
-      // Fetch users in smaller chunks to avoid Supabase limits
       let processedTotal = 0;
       let totalAdded = 0;
       let totalExisting = 0;
       let totalErrors = 0;
       let hasMore = true;
-      const chunkSize = 1000; // Supabase pagination size
+      const chunkSize = 1000;
 
       const guild = interaction.guild;
       if (!guild) {
-        await interaction.editReply("Failed to find guild.");
+        await safeReply(interaction, "Failed to find guild.");
         return;
       }
 
       const newRole = guild.roles.cache.get(NEW_WANKME_ROLE_ID);
       if (!newRole) {
-        await interaction.editReply("Failed to find the new role.");
+        await safeReply(interaction, "Failed to find the new role.");
         return;
       }
 
       while (hasMore) {
-        // Fetch next chunk of users
         const { data: verifiedUsers, error } = await supabase
           .from("users")
           .select("discord_id")
@@ -910,7 +909,6 @@ client.on("interactionCreate", async (interaction) => {
           continue;
         }
 
-        // Process users in smaller batches to avoid rate limits
         const batchSize = 100;
         for (let i = 0; i < verifiedUsers.length; i += batchSize) {
           const batch = verifiedUsers.slice(i, i + batchSize);
@@ -943,38 +941,90 @@ client.on("interactionCreate", async (interaction) => {
 
           processedTotal += batch.length;
 
-          // Update progress every 100 users
-          const progressEmbed = new EmbedBuilder()
-            .setColor(0x0099ff)
-            .setTitle("Already Wanked Role Assignment Progress")
-            .setDescription(
-              `**Progress:**\n\n` +
-              `• ${totalAdded} users received the new role\n` +
-              `• ${totalExisting} users already had the role\n` +
-              `• ${totalErrors} errors encountered\n\n` +
-              `Processed ${processedTotal} users so far`
-            );
-
-          await interaction.editReply({ embeds: [progressEmbed] });
+          // Update progress every 100 users and check if we need a new interaction
+          if (Date.now() - lastInteractionTime > 600000) { // 10 minutes
+            // Create a new follow-up message instead of editing
+            await interaction.followUp({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor(0x0099ff)
+                  .setTitle("Already Wanked Role Assignment Progress")
+                  .setDescription(
+                    `**Progress Update:**\n\n` +
+                    `• ${totalAdded} users received the new role\n` +
+                    `• ${totalExisting} users already had the role\n` +
+                    `• ${totalErrors} errors encountered\n\n` +
+                    `Processed ${processedTotal} users so far\n` +
+                    `Still processing...`
+                  )
+              ]
+            });
+            lastInteractionTime = Date.now();
+          } else {
+            // Try to edit the last message, but don't throw if it fails
+            try {
+              await interaction.editReply({
+                embeds: [
+                  new EmbedBuilder()
+                    .setColor(0x0099ff)
+                    .setTitle("Already Wanked Role Assignment Progress")
+                    .setDescription(
+                      `**Progress:**\n\n` +
+                      `• ${totalAdded} users received the new role\n` +
+                      `• ${totalExisting} users already had the role\n` +
+                      `• ${totalErrors} errors encountered\n\n` +
+                      `Processed ${processedTotal} users so far`
+                    )
+                ]
+              });
+            } catch (err) {
+              if (err.code === 50027) {
+                // Token expired, create new follow-up
+                await interaction.followUp({
+                  embeds: [
+                    new EmbedBuilder()
+                      .setColor(0x0099ff)
+                      .setTitle("Already Wanked Role Assignment Progress")
+                      .setDescription(
+                        `**Progress Update:**\n\n` +
+                        `• ${totalAdded} users received the new role\n` +
+                        `• ${totalExisting} users already had the role\n` +
+                        `• ${totalErrors} errors encountered\n\n` +
+                        `Processed ${processedTotal} users so far\n` +
+                        `Still processing...`
+                      )
+                  ]
+                });
+                lastInteractionTime = Date.now();
+              }
+            }
+          }
         }
       }
 
-      const finalEmbed = new EmbedBuilder()
-        .setColor(0x0099ff)
-        .setTitle("Already Wanked Role Assignment Complete")
-        .setDescription(
-          `**Final Results:**\n\n` +
-          `• ${totalAdded} users received the new role\n` +
-          `• ${totalExisting} users already had the role\n` +
-          `• ${totalErrors} errors encountered\n\n` +
-          `Total users processed: ${processedTotal}`
-        );
-
-      await interaction.editReply({ embeds: [finalEmbed] });
+      // Final update as a new follow-up message
+      await interaction.followUp({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x0099ff)
+            .setTitle("Already Wanked Role Assignment Complete")
+            .setDescription(
+              `**Final Results:**\n\n` +
+              `• ${totalAdded} users received the new role\n` +
+              `• ${totalExisting} users already had the role\n` +
+              `• ${totalErrors} errors encountered\n\n` +
+              `Total users processed: ${processedTotal}`
+            )
+        ]
+      });
 
     } catch (err) {
       console.error("Error in alreadywanked command:", err);
-      await interaction.editReply("An error occurred while assigning roles to verified users.");
+      try {
+        await interaction.followUp("An error occurred while assigning roles to verified users.");
+      } catch (followUpErr) {
+        console.error("Error sending error message:", followUpErr);
+      }
     }
   }
   //wankme
