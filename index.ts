@@ -872,8 +872,9 @@ client.on("interactionCreate", async (interaction) => {
       return;
     }
 
-    await interaction.reply("Starting role assignment process...");
-    let lastInteractionTime = Date.now();
+    // Create a new channel message instead of using interaction reply
+    const statusMessage = await interaction.channel.send("Starting role assignment process...");
+    await interaction.reply({ content: "Process started! Check status message above.", ephemeral: true });
 
     try {
       let processedTotal = 0;
@@ -885,13 +886,13 @@ client.on("interactionCreate", async (interaction) => {
 
       const guild = interaction.guild;
       if (!guild) {
-        await safeReply(interaction, "Failed to find guild.");
+        await statusMessage.edit("Failed to find guild.");
         return;
       }
 
       const newRole = guild.roles.cache.get(NEW_WANKME_ROLE_ID);
       if (!newRole) {
-        await safeReply(interaction, "Failed to find the new role.");
+        await statusMessage.edit("Failed to find the new role.");
         return;
       }
 
@@ -941,33 +942,31 @@ client.on("interactionCreate", async (interaction) => {
 
           processedTotal += batch.length;
 
-          // Update progress every 100 users and check if we need a new interaction
-          if (Date.now() - lastInteractionTime > 600000) { // 10 minutes
-            // Create a new follow-up message instead of editing
-            await interaction.followUp({
+          // Update status message every 100 users
+          try {
+            await statusMessage.edit({
+              content: "",
               embeds: [
                 new EmbedBuilder()
                   .setColor(0x0099ff)
                   .setTitle("Already Wanked Role Assignment Progress")
                   .setDescription(
-                    `**Progress Update:**\n\n` +
+                    `**Progress:**\n\n` +
                     `• ${totalAdded} users received the new role\n` +
                     `• ${totalExisting} users already had the role\n` +
                     `• ${totalErrors} errors encountered\n\n` +
-                    `Processed ${processedTotal} users so far\n` +
-                    `Still processing...`
+                    `Processed ${processedTotal} users so far`
                   )
               ]
             });
-            lastInteractionTime = Date.now();
-          } else {
-            // Try to edit the last message, but don't throw if it fails
+          } catch (err) {
+            // If status message edit fails, create a new one
             try {
-              await interaction.editReply({
+              const newStatusMessage = await interaction.channel.send({
                 embeds: [
                   new EmbedBuilder()
                     .setColor(0x0099ff)
-                    .setTitle("Already Wanked Role Assignment Progress")
+                    .setTitle("Already Wanked Role Assignment Progress (Continued)")
                     .setDescription(
                       `**Progress:**\n\n` +
                       `• ${totalAdded} users received the new role\n` +
@@ -977,53 +976,40 @@ client.on("interactionCreate", async (interaction) => {
                     )
                 ]
               });
-            } catch (err) {
-              if (err.code === 50027) {
-                // Token expired, create new follow-up
-                await interaction.followUp({
-                  embeds: [
-                    new EmbedBuilder()
-                      .setColor(0x0099ff)
-                      .setTitle("Already Wanked Role Assignment Progress")
-                      .setDescription(
-                        `**Progress Update:**\n\n` +
-                        `• ${totalAdded} users received the new role\n` +
-                        `• ${totalExisting} users already had the role\n` +
-                        `• ${totalErrors} errors encountered\n\n` +
-                        `Processed ${processedTotal} users so far\n` +
-                        `Still processing...`
-                      )
-                  ]
-                });
-                lastInteractionTime = Date.now();
-              }
+              statusMessage = newStatusMessage;
+            } catch (msgError) {
+              console.error("Failed to send new status message:", msgError);
             }
           }
         }
       }
 
-      // Final update as a new follow-up message
-      await interaction.followUp({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x0099ff)
-            .setTitle("Already Wanked Role Assignment Complete")
-            .setDescription(
-              `**Final Results:**\n\n` +
-              `• ${totalAdded} users received the new role\n` +
-              `• ${totalExisting} users already had the role\n` +
-              `• ${totalErrors} errors encountered\n\n` +
-              `Total users processed: ${processedTotal}`
-            )
-        ]
-      });
+      // Final update
+      try {
+        await interaction.channel.send({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x0099ff)
+              .setTitle("Already Wanked Role Assignment Complete")
+              .setDescription(
+                `**Final Results:**\n\n` +
+                `• ${totalAdded} users received the new role\n` +
+                `• ${totalExisting} users already had the role\n` +
+                `• ${totalErrors} errors encountered\n\n` +
+                `Total users processed: ${processedTotal}`
+              )
+          ]
+        });
+      } catch (err) {
+        console.error("Error sending final message:", err);
+      }
 
     } catch (err) {
       console.error("Error in alreadywanked command:", err);
       try {
-        await interaction.followUp("An error occurred while assigning roles to verified users.");
-      } catch (followUpErr) {
-        console.error("Error sending error message:", followUpErr);
+        await interaction.channel.send("An error occurred while assigning roles to verified users.");
+      } catch (msgErr) {
+        console.error("Failed to send error message:", msgErr);
       }
     }
   }
