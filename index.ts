@@ -860,7 +860,10 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
 
-  /if (interaction.commandName === "alreadywanked") {
+  // -------------------------------------------------------
+  // /alreadywanked (admin)
+  // -------------------------------------------------------
+  if (interaction.commandName === "alreadywanked") {
     if (!hasAdminRole(interaction.member)) {
       await interaction.reply({
         content: "You don't have permission to use this command.",
@@ -872,100 +875,59 @@ client.on("interactionCreate", async (interaction) => {
     await interaction.deferReply();
 
     try {
-      // Add pagination to handle more than 1000 users
-      let processedTotal = 0;
-      const batchSize = 500;
-      
-      while (true) {
-        const { data: verifiedUsers, error, count } = await supabase
-          .from("users")
-          .select("discord_id", { count: 'exact' })
-          .not("address", "is", null)
-          .range(processedTotal, processedTotal + batchSize - 1);
+      const { data: verifiedUsers, error } = await supabase
+        .from("users")
+        .select("discord_id")
+        .not("address", "is", null);
 
-        if (error) throw error;
-        if (!verifiedUsers?.length) break;
+      if (error) throw error;
 
-        const guild = interaction.guild;
-        if (!guild) {
-          await interaction.editReply("Failed to find guild.");
-          return;
-        }
-
-        const newRole = guild.roles.cache.get(NEW_WANKME_ROLE_ID);
-        if (!newRole) {
-          await interaction.editReply("Failed to find the new role.");
-          return;
-        }
-
-        let addedCount = 0;
-        let existingCount = 0;
-        let errorCount = 0;
-
-        for (const user of verifiedUsers) {
-          // Skip if discord_id is null/undefined
-          if (!user?.discord_id) {
-            errorCount++;
-            console.error("Null/undefined discord_id found in database");
-            continue;
-          }
-
-          try {
-            const member = await guild.members.fetch(user.discord_id).catch(err => {
-              if (err.code === 10007) {
-                // User not in server - we can log this separately
-                console.log(`User ${user.discord_id} is no longer in the server`);
-                return null;
-              }
-              throw err;
-            });
-
-            if (member) {
-              if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
-                await member.roles.add(newRole);
-                addedCount++;
-              } else {
-                existingCount++;
-              }
-            } else {
-              errorCount++;
-            }
-          } catch (err) {
-            console.error(`Error processing user ${user.discord_id}:`, err);
-            errorCount++;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-
-        processedTotal += verifiedUsers.length;
-
-        // Update progress
-        const progressEmbed = new EmbedBuilder()
-          .setColor(0x0099ff)
-          .setTitle("Already Wanked Role Assignment Progress")
-          .setDescription(
-            `**Current Batch Results:**\n\n` +
-            `• ${addedCount} users received the new role\n` +
-            `• ${existingCount} users already had the role\n` +
-            `• ${errorCount} errors encountered\n\n` +
-            `Processed ${processedTotal} users so far`
-          );
-
-        await interaction.editReply({ embeds: [progressEmbed] });
+      const guild = interaction.guild;
+      if (!guild) {
+        await interaction.editReply("Failed to find guild.");
+        return;
       }
 
-      // Final results embed
-      const finalEmbed = new EmbedBuilder()
+      const newRole = guild.roles.cache.get(NEW_WANKME_ROLE_ID);
+      if (!newRole) {
+        await interaction.editReply("Failed to find the new role.");
+        return;
+      }
+
+      let addedCount = 0;
+      let existingCount = 0;
+      let errorCount = 0;
+
+      for (const user of verifiedUsers) {
+        try {
+          const member = await guild.members.fetch(user.discord_id);
+          if (member) {
+            if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+              await member.roles.add(newRole);
+              addedCount++;
+            } else {
+              existingCount++;
+            }
+          }
+        } catch (err) {
+          console.error(`Error processing user ${user.discord_id}:`, err);
+          errorCount++;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+
+      const resultEmbed = new EmbedBuilder()
         .setColor(0x0099ff)
         .setTitle("Already Wanked Role Assignment Complete")
         .setDescription(
-          `**Final Results:**\n\n` +
-          `Total users processed: ${processedTotal}\n` +
-          `Process completed successfully!`
+          `**Results:**\n\n` +
+            `• ${addedCount} users received the new role\n` +
+            `• ${existingCount} users already had the role\n` +
+            `• ${errorCount} errors encountered\n\n` +
+            `Total verified users processed: ${verifiedUsers.length}`
         );
 
-      await interaction.editReply({ embeds: [finalEmbed] });
-
+      await interaction.editReply({ embeds: [resultEmbed] });
     } catch (err) {
       console.error("Error in alreadywanked command:", err);
       await interaction.editReply("An error occurred while assigning roles to verified users.");
