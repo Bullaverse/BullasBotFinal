@@ -152,6 +152,35 @@ async function fetchAllEligibleUsers(team: string, threshold: number) {
   console.log(`Total eligible users found: ${allUsers.length}`);
   return allUsers;
 }
+//PURGE
+async function getAllZeroBalanceUsers() {
+  let allUsers = [];
+  let page = 0;
+  const PAGE_SIZE = 1000;
+  
+  while (true) {
+    const { data, error } = await supabase
+      .from("users")
+      .select("discord_id, team")
+      .eq("points", 0)
+      .or("team.eq.bullas,team.eq.beras")
+      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+
+    if (error) {
+      console.error("Error fetching zero balance users:", error);
+      break;
+    }
+
+    if (!data || data.length === 0) break;
+    
+    allUsers.push(...data);
+    
+    if (data.length < PAGE_SIZE) break;
+    page++;
+  }
+
+  return allUsers;
+}
 /********************************************************************
  *              TEAM POINTS & TOP PLAYERS HELPERS
  ********************************************************************/
@@ -1171,15 +1200,9 @@ client.on("interactionCreate", async (interaction) => {
     await interaction.deferReply();
 
     try {
-      // First do a simulation
-      const { data: zeroBalanceUsers, error } = await supabase
-        .from("users")
-        .select("discord_id, team")
-        .eq("points", 0)
-        .or("team.eq.bullas,team.eq.beras");
-
-      if (error) throw error;
-
+      // Get all zero balance users with pagination
+      const zeroBalanceUsers = await getAllZeroBalanceUsers();
+      
       let simulationResults = {
         toRemove: 0,
         notInServer: 0,
