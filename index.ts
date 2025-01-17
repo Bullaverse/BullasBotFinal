@@ -718,16 +718,17 @@ client.on("interactionCreate", async (interaction) => {
       );
 
       const simResultMsg = new EmbedBuilder()
-        .setColor(0x0099ff)
-        .setTitle("Whitelist Role Update Simulation")
-        .setDescription(
-          `**Here's what will happen if you proceed:**\n\n` +
-            `**Whitelist Role:**\n` +
-            `• ${simulationLog.added} users will receive the role\n` +
-            `• ${simulationLog.existing} users already have it\n\n` +
-            `Threshold: ${threshold.toFixed(2)} points\n\n` + 
-            `Would you like to proceed with these changes?`
-        );
+    .setColor(0x0099ff)
+    .setTitle("Whitelist Role Update Simulation")
+    .setDescription(
+      `**Here's what will happen if you proceed:**\n\n` +
+      `**Whitelist Role:**\n` +
+      `• ${simulationLog.added} users will receive the role\n` +
+      `• ${simulationLog.existing} users already have it\n` +
+      `• ${simulationLog.total - (simulationLog.added + simulationLog.existing)} users skipped (left server)\n\n` +
+      `Threshold: ${threshold.toFixed(2)} points\n\n` +
+      `Would you like to proceed with these changes?`
+    );
 
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
@@ -780,16 +781,17 @@ client.on("interactionCreate", async (interaction) => {
       );
 
       const simResultMsg = new EmbedBuilder()
-        .setColor(0x0099ff)
-        .setTitle("Moolalist Role Update Simulation")
-        .setDescription(
-          `**Here's what will happen if you proceed:**\n\n` +
-            `**Moolalist Role:**\n` +
-            `• ${simulationLog.added} users will receive the role\n` +
-            `• ${simulationLog.existing} users already have it\n\n` +
-            `Threshold: ${threshold.toFixed(2)} points\n\n` + 
-            `Would you like to proceed with these changes?`
-        );
+    .setColor(0x0099ff)
+    .setTitle("Moolalist Role Update Simulation")
+    .setDescription(
+      `**Here's what will happen if you proceed:**\n\n` +
+      `**Moolalist Role:**\n` +
+      `• ${simulationLog.added} users will receive the role\n` +
+      `• ${simulationLog.existing} users already have it\n` +
+      `• ${simulationLog.total - (simulationLog.added + simulationLog.existing)} users skipped (left server)\n\n` +
+      `Threshold: ${threshold.toFixed(2)} points\n\n` +
+      `Would you like to proceed with these changes?`
+    );
 
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
@@ -842,16 +844,17 @@ client.on("interactionCreate", async (interaction) => {
       );
 
       const simResultMsg = new EmbedBuilder()
-        .setColor(0x0099ff)
-        .setTitle("Free Mint Role Update Simulation")
-        .setDescription(
-          `**Here's what will happen if you proceed:**\n\n` +
-            `**Free Mint Role:**\n` +
-            `• ${simulationLog.added} users will receive the role\n` +
-            `• ${simulationLog.existing} users already have it\n\n` +
-            `Threshold: ${threshold.toFixed(2)} points\n\n` + 
-            `Would you like to proceed with these changes?`
-        );
+    .setColor(0x0099ff)
+    .setTitle("Free Mint Role Update Simulation")
+    .setDescription(
+      `**Here's what will happen if you proceed:**\n\n` +
+      `**Free Mint Role:**\n` +
+      `• ${simulationLog.added} users will receive the role\n` +
+      `• ${simulationLog.existing} users already have it\n` +
+      `• ${simulationLog.total - (simulationLog.added + simulationLog.existing)} users skipped (left server)\n\n` +
+      `Threshold: ${threshold.toFixed(2)} points\n\n` +
+      `Would you like to proceed with these changes?`
+    );
 
       const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
