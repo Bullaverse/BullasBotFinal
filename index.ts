@@ -1070,13 +1070,29 @@ client.on("interactionCreate", async (interaction) => {
         .single();
 
     if (userData) {
+        // User is already verified, let's restore their role if they don't have it
+        const member = interaction.member as GuildMember;
+        const newRole = interaction.guild?.roles.cache.get(NEW_WANKME_ROLE_ID);
+        
+        if (member && newRole && !member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+            try {
+                await member.roles.add(newRole);
+                await interaction.reply({
+                    content: "✅ Your verified status has been restored!",
+                    ephemeral: true
+                });
+                return;
+            } catch (error) {
+                console.error("Error restoring role:", error);
+            }
+        }
+
         await interaction.reply({
             content: `You have already linked your account. Your linked account: \`${maskAddress(userData.address)}\``,
             ephemeral: true
         });
         return;
     }
-
     const { error } = await supabase
         .from("tokens")
         .insert({ token: uuid, discord_id: userId, used: false })
@@ -1155,6 +1171,7 @@ client.on("interactionCreate", async (interaction) => {
     await interaction.deferReply();
 
     try {
+      // First do a simulation
       const { data: zeroBalanceUsers, error } = await supabase
         .from("users")
         .select("discord_id, team")
@@ -1163,32 +1180,60 @@ client.on("interactionCreate", async (interaction) => {
 
       if (error) throw error;
 
-      let removedCount = 0;
+      let simulationResults = {
+        toRemove: 0,
+        notInServer: 0,
+        total: zeroBalanceUsers.length
+      };
+
+      // Quick simulation check
       for (const user of zeroBalanceUsers) {
         try {
-          const member = await interaction.guild?.members.fetch(user.discord_id);
+          const member = await interaction.guild?.members.fetch(user.discord_id).catch(() => null);
           if (member) {
-            if (user.team === "bullas" && member.roles.cache.has(BULL_ROLE_ID)) {
-              await member.roles.remove(BULL_ROLE_ID);
-              removedCount++;
-            } else if (user.team === "beras" && member.roles.cache.has(BEAR_ROLE_ID)) {
-              await member.roles.remove(BEAR_ROLE_ID);
-              removedCount++;
+            if ((user.team === "bullas" && member.roles.cache.has(BULL_ROLE_ID)) ||
+                (user.team === "beras" && member.roles.cache.has(BEAR_ROLE_ID))) {
+              simulationResults.toRemove++;
             }
+          } else {
+            simulationResults.notInServer++;
           }
-        } catch (roleRemoveErr) {
-          console.error(`Error removing role from user ${user.discord_id}:`, roleRemoveErr);
+        } catch (err) {
+          simulationResults.notInServer++;
         }
       }
 
-      await interaction.editReply(
-        `Removed team roles from ${removedCount} accounts with 0 moola balance.`
+      const simResultMsg = new EmbedBuilder()
+        .setColor(0x0099ff)
+        .setTitle("Zero Balance Purge Simulation")
+        .setDescription(
+          `**Here's what will happen if you proceed:**\n\n` +
+          `• ${simulationResults.toRemove} roles will be removed\n` +
+          `• ${simulationResults.notInServer} users are no longer in server\n` +
+          `• ${simulationResults.total} total accounts with 0 balance\n\n` +
+          `Would you like to proceed with these changes?`
+        );
+
+      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId("confirm_purge")
+          .setLabel("Proceed with Purge")
+          .setStyle(ButtonStyle.Primary),
+        new ButtonBuilder()
+          .setCustomId("cancel_purge")
+          .setLabel("Cancel")
+          .setStyle(ButtonStyle.Secondary)
       );
+
+      await interaction.editReply({
+        embeds: [simResultMsg],
+        components: [row],
+      });
     } catch (err) {
-      console.error("Error executing purgezerobalance command:", err);
-      await interaction.editReply("An error occurred while purging zero balance accounts.");
+      console.error("Error in purge simulation:", err);
+      await interaction.editReply("An error occurred while simulating the purge.");
     }
-  }
+}
 
   // -------------------------------------------------------
   // /transfer (admin only)
@@ -2024,7 +2069,119 @@ if (interaction.customId.startsWith("confirm_fm_")) {
     });
   }
 }
+//PURGE
+if (interaction.customId === "cancel_purge") {
+  await interaction.update({
+    content: "Purge cancelled.",
+    embeds: [],
+    components: [],
+  });
+  return;
+}
 
+if (interaction.customId === "confirm_purge") {
+  if (!hasAdminRole(interaction.member)) {
+    return interaction.reply({
+      content: "You don't have permission to confirm this action.",
+      ephemeral: true,
+    });
+  }
+
+  const statusMessage = await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x0099ff)
+        .setTitle("Zero Balance Purge Progress")
+        .setDescription("Starting purge process...")
+    ]
+  });
+
+  await interaction.update({
+    content: "Purge started. Check progress above ↑",
+    embeds: [],
+    components: [],
+  });
+
+  try {
+    const { data: zeroBalanceUsers, error } = await supabase
+      .from("users")
+      .select("discord_id, team")
+      .eq("points", 0)
+      .or("team.eq.bullas,team.eq.beras");
+
+    if (error) throw error;
+
+    let removedCount = 0;
+    let processedCount = 0;
+    let errorCount = 0;
+    const totalUsers = zeroBalanceUsers.length;
+
+    const updateProgress = async () => {
+      await statusMessage.edit({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x0099ff)
+            .setTitle("Zero Balance Purge Progress")
+            .setDescription(
+              `**Progress:**\n\n` +
+              `• ${removedCount} roles removed\n` +
+              `• ${processedCount} of ${totalUsers} users processed\n` +
+              `• ${errorCount} errors encountered\n\n` +
+              `Please wait while purge continues...`
+            )
+        ]
+      });
+    };
+
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < zeroBalanceUsers.length; i += BATCH_SIZE) {
+      const batch = zeroBalanceUsers.slice(i, Math.min(i + BATCH_SIZE, zeroBalanceUsers.length));
+      
+      for (const user of batch) {
+        try {
+          const member = await interaction.guild?.members.fetch(user.discord_id).catch(() => null);
+          if (member) {
+            if (user.team === "bullas" && member.roles.cache.has(BULL_ROLE_ID)) {
+              await member.roles.remove(BULL_ROLE_ID);
+              removedCount++;
+            } else if (user.team === "beras" && member.roles.cache.has(BEAR_ROLE_ID)) {
+              await member.roles.remove(BEAR_ROLE_ID);
+              removedCount++;
+            }
+          }
+        } catch (roleRemoveErr) {
+          console.error(`Error removing role from user ${user.discord_id}:`, roleRemoveErr);
+          errorCount++;
+        }
+        
+        processedCount++;
+        if (processedCount % 10 === 0) {
+          await updateProgress();
+        }
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+
+    await statusMessage.edit({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x0099ff)
+          .setTitle("Zero Balance Purge Complete")
+          .setDescription(
+            `**Final Results:**\n\n` +
+            `• ${removedCount} roles removed\n` +
+            `• ${totalUsers} users processed\n` +
+            `• ${errorCount} errors encountered`
+          )
+      ]
+    });
+
+  } catch (err) {
+    console.error("Error executing purge:", err);
+    await interaction.channel.send("An error occurred during the purge process.");
+  }
+}
   // Leaderboard pagination
   const [action, teamOption, currentPage] = interaction.customId.split("_");
   if (action !== "prev" && action !== "next") return;
