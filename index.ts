@@ -114,14 +114,18 @@ export const maskAddress = (address: string) => {
 async function fetchAllEligibleUsers(team: string, threshold: number) {
   let allUsers = [];
   let page = 0;
-  const PAGE_SIZE = 1000; // Supabase maximum limit
+  const PAGE_SIZE = 1000;
+  
+  // Convert threshold to string with fixed precision
+  const preciseThreshold = threshold.toFixed(8);
+  console.log(`Fetching users for team ${team} with threshold >= ${preciseThreshold}`);
   
   while (true) {
     const { data, error } = await supabase
       .from("users")
       .select("discord_id, points, team")
       .eq("team", team)
-      .gte("points", threshold)
+      .filter('points', 'gte', preciseThreshold) // Changed from .gte to .filter
       .order("points", { ascending: false })
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
@@ -132,12 +136,20 @@ async function fetchAllEligibleUsers(team: string, threshold: number) {
 
     if (!data || data.length === 0) break;
     
-    allUsers.push(...data);
-    if (data.length < PAGE_SIZE) break;
+    // Double-check threshold in JS for maximum precision
+    const filteredData = data.filter(user => {
+      const userPoints = Number(user.points.toFixed(8));
+      const thresholdNum = Number(preciseThreshold);
+      return userPoints >= thresholdNum;
+    });
     
+    allUsers.push(...filteredData);
+    
+    if (data.length < PAGE_SIZE) break;
     page++;
   }
 
+  console.log(`Total eligible users found: ${allUsers.length}`);
   return allUsers;
 }
 /********************************************************************
@@ -466,60 +478,59 @@ let WHITELIST_MINIMUM = 100;
  * 10) /updatewhitelistminimum (admin-only)
  * 11) /leaderboard          (paginated leaderboard)
  */
+
+//UPDATEWL
 const commands = [
-  // ====== 1) /updateroles ======
   new SlashCommandBuilder()
-    .setName("updatewl")
-    .setDescription("Update Whitelist roles")
-    .addStringOption((option) =>
-      option
-        .setName("team")
-        .setDescription("Team to update WL roles for")
-        .setRequired(true)
-        .addChoices({ name: "Winning", value: "winning" }, { name: "Losing", value: "losing" })
-    )
-    .addIntegerOption((option) =>
-      option
-        .setName("threshold")
-        .setDescription("MOOLA threshold for WL role")
-        .setRequired(true)
-    ),
-
-  // 2. /updateml command
-  new SlashCommandBuilder()
-    .setName("updateml")
-    .setDescription("Update Moolalist roles")
-    .addStringOption((option) =>
-      option
-        .setName("team")
-        .setDescription("Team to update ML roles for")
-        .setRequired(true)
-        .addChoices({ name: "Winning", value: "winning" }, { name: "Losing", value: "losing" })
-    )
-    .addIntegerOption((option) =>
-      option
-        .setName("threshold")
-        .setDescription("MOOLA threshold for ML role")
-        .setRequired(true)
-    ),
-
-  // 3. /updatefreemint command
-  new SlashCommandBuilder()
-    .setName("updatefreemint")
-    .setDescription("Update Free Mint roles")
-    .addStringOption((option) =>
-      option
-        .setName("team")
-        .setDescription("Team to update Free Mint roles for")
-        .setRequired(true)
-        .addChoices({ name: "Winning", value: "winning" }, { name: "Losing", value: "losing" })
-    )
-    .addIntegerOption((option) =>
-      option
-        .setName("threshold")
-        .setDescription("MOOLA threshold for Free Mint role")
-        .setRequired(true)
-    ),
+  .setName("updatewl")
+  .setDescription("Update Whitelist roles")
+  .addStringOption((option) =>
+    option
+      .setName("team")
+      .setDescription("Team to update WL roles for")
+      .setRequired(true)
+      .addChoices({ name: "Winning", value: "winning" }, { name: "Losing", value: "losing" })
+  )
+  .addNumberOption((option) =>  // Changed from addIntegerOption to addNumberOption
+    option
+      .setName("threshold")
+      .setDescription("MOOLA threshold for WL role")
+      .setRequired(true)
+  ),
+//UpdateML
+new SlashCommandBuilder()
+  .setName("updateml")
+  .setDescription("Update Moolalist roles")
+  .addStringOption((option) =>
+    option
+      .setName("team")
+      .setDescription("Team to update ML roles for")
+      .setRequired(true)
+      .addChoices({ name: "Winning", value: "winning" }, { name: "Losing", value: "losing" })
+  )
+  .addNumberOption((option) =>  // Changed from addIntegerOption to addNumberOption
+    option
+      .setName("threshold")
+      .setDescription("MOOLA threshold for ML role")
+      .setRequired(true)
+  ),
+//UPDATEFREEMINT
+new SlashCommandBuilder()
+  .setName("updatefreemint")
+  .setDescription("Update Free Mint roles")
+  .addStringOption((option) =>
+    option
+      .setName("team")
+      .setDescription("Team to update Free Mint roles for")
+      .setRequired(true)
+      .addChoices({ name: "Winning", value: "winning" }, { name: "Losing", value: "losing" })
+  )
+  .addNumberOption((option) =>  // Changed from addIntegerOption to addNumberOption
+    option
+      .setName("threshold")
+      .setDescription("MOOLA threshold for Free Mint role")
+      .setRequired(true)
+  ),
 
   // ====== 2) /alreadywanked ======
   new SlashCommandBuilder()
@@ -695,7 +706,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     const team = interaction.options.getString("team", true) as "winning" | "losing";
-    const threshold = interaction.options.getInteger("threshold", true);
+    const threshold = interaction.options.getNumber("threshold", true);
 
     try {
       // Simulation
@@ -714,6 +725,7 @@ client.on("interactionCreate", async (interaction) => {
             `**Whitelist Role:**\n` +
             `• ${simulationLog.added} users will receive the role\n` +
             `• ${simulationLog.existing} users already have it\n\n` +
+            `Threshold: ${threshold.toFixed(2)} points\n\n` + 
             `Would you like to proceed with these changes?`
         );
 
@@ -756,7 +768,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     const team = interaction.options.getString("team", true) as "winning" | "losing";
-    const threshold = interaction.options.getInteger("threshold", true);
+    const threshold = interaction.options.getNumber("threshold", true);
 
     try {
       // Simulation
@@ -775,6 +787,7 @@ client.on("interactionCreate", async (interaction) => {
             `**Moolalist Role:**\n` +
             `• ${simulationLog.added} users will receive the role\n` +
             `• ${simulationLog.existing} users already have it\n\n` +
+            `Threshold: ${threshold.toFixed(2)} points\n\n` + 
             `Would you like to proceed with these changes?`
         );
 
@@ -817,7 +830,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     const team = interaction.options.getString("team", true) as "winning" | "losing";
-    const threshold = interaction.options.getInteger("threshold", true);
+    const threshold = interaction.options.getNumber("threshold", true);
 
     try {
       // Simulation
@@ -836,6 +849,7 @@ client.on("interactionCreate", async (interaction) => {
             `**Free Mint Role:**\n` +
             `• ${simulationLog.added} users will receive the role\n` +
             `• ${simulationLog.existing} users already have it\n\n` +
+            `Threshold: ${threshold.toFixed(2)} points\n\n` + 
             `Would you like to proceed with these changes?`
         );
 
@@ -1635,7 +1649,7 @@ client.on("interactionCreate", async (interaction) => {
       const roleUpdateLog = await updateWhitelistRoles(
         interaction.guild!,
         team as "winning" | "losing",
-        parseInt(threshold),
+        Number(threshold),
         false
       );
 
@@ -1671,7 +1685,7 @@ client.on("interactionCreate", async (interaction) => {
       const roleUpdateLog = await updateMoolalistRoles(
         interaction.guild!,
         team as "winning" | "losing",
-        parseInt(threshold),
+        Number(threshold),
         false
       );
 
@@ -1707,7 +1721,7 @@ client.on("interactionCreate", async (interaction) => {
       const roleUpdateLog = await updateFreeMintRoles(
         interaction.guild!,
         team as "winning" | "losing",
-        parseInt(threshold),
+        Number(threshold),
         false
       );
 
