@@ -184,14 +184,16 @@ async function updateWhitelistRoles(
   guild: Guild,
   teamType: 'winning' | 'losing',
   threshold: number,
-  isSimulation: boolean = false
+  isSimulation: boolean = false,
+  onProgress?: (progress: { processed: number, added: number, existing: number, total: number }) => Promise<void>
 ) {
   console.log(`${isSimulation ? 'Simulating' : 'Starting'} whitelist role update for ${teamType} team...`);
 
   let roleUpdateLog = {
     added: 0,
     existing: 0,
-    total: 0
+    total: 0,
+    processed: 0
   };
 
   const whitelistRole = guild.roles.cache.get(WHITELIST_ROLE_ID);
@@ -202,19 +204,16 @@ async function updateWhitelistRoles(
     return roleUpdateLog;
   }
 
-  // Get team points to determine winning team
   const teamPoints = await getTeamPoints();
   const winningTeam = teamPoints.bullas > teamPoints.beras ? "bullas" : "beras";
   const targetTeam = teamType === "winning" ? winningTeam : winningTeam === "bullas" ? "beras" : "bullas";
 
   console.log(`Target team: ${targetTeam}, Threshold: ${threshold}`);
 
-  // Fetch all eligible users with pagination
   const players = await fetchAllEligibleUsers(targetTeam, threshold);
   roleUpdateLog.total = players.length;
   console.log(`Found ${roleUpdateLog.total} eligible players`);
 
-  // Process in batches to avoid rate limits
   const BATCH_SIZE = 10;
   for (let i = 0; i < players.length; i += BATCH_SIZE) {
     const batch = players.slice(i, Math.min(i + BATCH_SIZE, players.length));
@@ -223,8 +222,11 @@ async function updateWhitelistRoles(
       if (!player.discord_id) continue;
 
       try {
-        const member = await guild.members.fetch(player.discord_id);
-        if (!member) continue;
+        const member = await guild.members.fetch(player.discord_id).catch(() => null);
+        if (!member) {
+          console.log(`Skipped user ${player.discord_id} - No longer in server`);
+          continue;
+        }
 
         const hasWLRole = member.roles.cache.has(WHITELIST_ROLE_ID);
         const hasWLWinnerRole = member.roles.cache.has(WL_WINNER_ROLE_ID);
@@ -240,9 +242,15 @@ async function updateWhitelistRoles(
       } catch (err) {
         console.error(`Error processing user ${player.discord_id}:`, err);
       }
+
+      roleUpdateLog.processed++;
+      
+      // Update progress every 10 users or on final user
+      if (onProgress && (roleUpdateLog.processed % 10 === 0 || roleUpdateLog.processed === roleUpdateLog.total)) {
+        await onProgress(roleUpdateLog);
+      }
     }
 
-    // Add delay between batches if not simulating
     if (!isSimulation) {
       await new Promise(resolve => setTimeout(resolve, 1000));
     }
@@ -255,14 +263,16 @@ async function updateMoolalistRoles(
   guild: Guild,
   teamType: 'winning' | 'losing',
   threshold: number,
-  isSimulation: boolean = false
+  isSimulation: boolean = false,
+  onProgress?: (progress: { processed: number, added: number, existing: number, total: number }) => Promise<void>
 ) {
   console.log(`${isSimulation ? 'Simulating' : 'Starting'} moolalist role update for ${teamType} team...`);
 
   let roleUpdateLog = {
     added: 0,
     existing: 0,
-    total: 0
+    total: 0,
+    processed: 0
   };
 
   const moolalistRole = guild.roles.cache.get(MOOLALIST_ROLE_ID);
@@ -279,7 +289,6 @@ async function updateMoolalistRoles(
 
   console.log(`Target team: ${targetTeam}, Threshold: ${threshold}`);
 
-  // Fetch all eligible users with pagination
   const players = await fetchAllEligibleUsers(targetTeam, threshold);
   roleUpdateLog.total = players.length;
   console.log(`Found ${roleUpdateLog.total} eligible players`);
@@ -292,8 +301,11 @@ async function updateMoolalistRoles(
       if (!player.discord_id) continue;
 
       try {
-        const member = await guild.members.fetch(player.discord_id);
-        if (!member) continue;
+        const member = await guild.members.fetch(player.discord_id).catch(() => null);
+        if (!member) {
+          console.log(`Skipped user ${player.discord_id} - No longer in server`);
+          continue;
+        }
 
         const hasMLRole = member.roles.cache.has(MOOLALIST_ROLE_ID);
         const hasMLWinnerRole = member.roles.cache.has(ML_WINNER_ROLE_ID);
@@ -309,6 +321,12 @@ async function updateMoolalistRoles(
       } catch (err) {
         console.error(`Error processing user ${player.discord_id}:`, err);
       }
+
+      roleUpdateLog.processed++;
+      
+      if (onProgress && (roleUpdateLog.processed % 10 === 0 || roleUpdateLog.processed === roleUpdateLog.total)) {
+        await onProgress(roleUpdateLog);
+      }
     }
 
     if (!isSimulation) {
@@ -323,14 +341,16 @@ async function updateFreeMintRoles(
   guild: Guild,
   teamType: 'winning' | 'losing',
   threshold: number,
-  isSimulation: boolean = false
+  isSimulation: boolean = false,
+  onProgress?: (progress: { processed: number, added: number, existing: number, total: number }) => Promise<void>
 ) {
   console.log(`${isSimulation ? 'Simulating' : 'Starting'} free mint role update for ${teamType} team...`);
 
   let roleUpdateLog = {
     added: 0,
     existing: 0,
-    total: 0
+    total: 0,
+    processed: 0
   };
 
   const freeMintRole = guild.roles.cache.get(FREE_MINT_ROLE_ID);
@@ -347,7 +367,6 @@ async function updateFreeMintRoles(
 
   console.log(`Target team: ${targetTeam}, Threshold: ${threshold}`);
 
-  // Fetch all eligible users with pagination
   const players = await fetchAllEligibleUsers(targetTeam, threshold);
   roleUpdateLog.total = players.length;
   console.log(`Found ${roleUpdateLog.total} eligible players`);
@@ -360,8 +379,11 @@ async function updateFreeMintRoles(
       if (!player.discord_id) continue;
 
       try {
-        const member = await guild.members.fetch(player.discord_id);
-        if (!member) continue;
+        const member = await guild.members.fetch(player.discord_id).catch(() => null);
+        if (!member) {
+          console.log(`Skipped user ${player.discord_id} - No longer in server`);
+          continue;
+        }
 
         const hasFMRole = member.roles.cache.has(FREE_MINT_ROLE_ID);
         const hasFMWinnerRole = member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID);
@@ -376,6 +398,12 @@ async function updateFreeMintRoles(
         }
       } catch (err) {
         console.error(`Error processing user ${player.discord_id}:`, err);
+      }
+
+      roleUpdateLog.processed++;
+      
+      if (onProgress && (roleUpdateLog.processed % 10 === 0 || roleUpdateLog.processed === roleUpdateLog.total)) {
+        await onProgress(roleUpdateLog);
       }
     }
 
@@ -1632,6 +1660,7 @@ client.on("interactionCreate", async (interaction) => {
     return;
   }
 
+  
   // CONFIRM WL
   if (interaction.customId.startsWith("confirm_wl_")) {
     if (!hasAdminRole(interaction.member)) {
@@ -1642,103 +1671,359 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     const [, , team, threshold] = interaction.customId.split("_");
+    
+    // Create initial status message
+    const statusMessage = await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x0099ff)
+          .setTitle("Whitelist Role Update Progress")
+          .setDescription("Starting role updates...")
+      ]
+    });
+
+    // Update original interaction
     await interaction.update({
-      content: "Executing whitelist role updates...",
+      content: "Role update started. Check progress above ↑",
       embeds: [],
       components: [],
     });
 
     try {
+      let lastMessageTime = Date.now();
+      let messageToUpdate = statusMessage;
+
+      // Progress update function
+      const updateProgress = async (progress: { processed: number, added: number, existing: number, total: number }) => {
+        try {
+          const now = Date.now();
+          
+          // If last message is too old, create a new one
+          if (now - lastMessageTime > 840000) { // 14 minutes
+            messageToUpdate = await interaction.channel.send({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor(0x0099ff)
+                  .setTitle("Whitelist Role Update Progress (Continued)")
+                  .setDescription("Continuing role updates...")
+              ]
+            });
+            lastMessageTime = now;
+          }
+
+          await messageToUpdate.edit({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0x0099ff)
+                .setTitle("Whitelist Role Update Progress")
+                .setDescription(
+                  `**Progress:**\n\n` +
+                  `• ${progress.added} roles added\n` +
+                  `• ${progress.existing} users already have the role\n` +
+                  `• ${progress.processed} out of ${progress.total} users processed\n\n` +
+                  `Process will continue in new message if this one gets too old.`
+                )
+            ]
+          });
+        } catch (err) {
+          console.error("Error updating status message:", err);
+          // Try to create a new message if update fails
+          try {
+            messageToUpdate = await interaction.channel.send({
+              embeds: [
+                new EmbedBuilder()
+                  .setColor(0x0099ff)
+                  .setTitle("Whitelist Role Update Progress (Recovered)")
+                  .setDescription(
+                    `**Progress:**\n\n` +
+                    `• ${progress.added} roles added\n` +
+                    `• ${progress.existing} users already have the role\n` +
+                    `• ${progress.processed} out of ${progress.total} users processed\n\n` +
+                    `Continuing updates...`
+                  )
+              ]
+            });
+            lastMessageTime = Date.now();
+          } catch (msgErr) {
+            console.error("Failed to create recovery message:", msgErr);
+          }
+        }
+      };
+
+      // Execute role updates with progress tracking
       const roleUpdateLog = await updateWhitelistRoles(
         interaction.guild!,
         team as "winning" | "losing",
         Number(threshold),
-        false
+        false,
+        updateProgress
       );
 
-      await interaction.editReply(
-        `Whitelist role updates completed!\n\n` +
-          `**Results:**\n` +
-          `• ${roleUpdateLog.added} roles added\n` +
-          `• ${roleUpdateLog.existing} users already had the role\n`
-      );
+      // Final status message
+      await interaction.channel.send({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x0099ff)
+            .setTitle("Whitelist Role Update Complete")
+            .setDescription(
+              `**Final Results:**\n\n` +
+              `• ${roleUpdateLog.added} roles added\n` +
+              `• ${roleUpdateLog.existing} users already had the role\n` +
+              `• ${roleUpdateLog.total} total users processed`
+            )
+        ]
+      });
     } catch (error) {
       console.error("Error executing WL role updates:", error);
-      await interaction.editReply("An error occurred while updating whitelist roles.");
-    }
-  }
-
-  // CONFIRM ML
-  if (interaction.customId.startsWith("confirm_ml_")) {
-    if (!hasAdminRole(interaction.member)) {
-      return interaction.reply({
-        content: "You don't have permission to confirm this action.",
-        ephemeral: true,
+      await interaction.channel.send({
+        content: "An error occurred during the role update process. Check the logs for details.",
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0xFF0000)
+            .setTitle("Role Update Error")
+            .setDescription(`Error: ${error.message}`)
+        ]
       });
     }
-
-    const [, , team, threshold] = interaction.customId.split("_");
-    await interaction.update({
-      content: "Executing moolalist role updates...",
-      embeds: [],
-      components: [],
-    });
-
-    try {
-      const roleUpdateLog = await updateMoolalistRoles(
-        interaction.guild!,
-        team as "winning" | "losing",
-        Number(threshold),
-        false
-      );
-
-      await interaction.editReply(
-        `Moolalist role updates completed!\n\n` +
-          `**Results:**\n` +
-          `• ${roleUpdateLog.added} roles added\n` +
-          `• ${roleUpdateLog.existing} users already had the role\n`
-      );
-    } catch (error) {
-      console.error("Error executing ML role updates:", error);
-      await interaction.editReply("An error occurred while updating moolalist roles.");
-    }
   }
 
-  // CONFIRM FREE MINT
-  if (interaction.customId.startsWith("confirm_fm_")) {
-    if (!hasAdminRole(interaction.member)) {
-      return interaction.reply({
-        content: "You don't have permission to confirm this action.",
-        ephemeral: true,
-      });
-    }
-
-    const [, , team, threshold] = interaction.customId.split("_");
-    await interaction.update({
-      content: "Executing free mint role updates...",
-      embeds: [],
-      components: [],
+  // ML Button Handler
+if (interaction.customId.startsWith("confirm_ml_")) {
+  if (!hasAdminRole(interaction.member)) {
+    return interaction.reply({
+      content: "You don't have permission to confirm this action.",
+      ephemeral: true,
     });
-
-    try {
-      const roleUpdateLog = await updateFreeMintRoles(
-        interaction.guild!,
-        team as "winning" | "losing",
-        Number(threshold),
-        false
-      );
-
-      await interaction.editReply(
-        `Free Mint role updates completed!\n\n` +
-          `**Results:**\n` +
-          `• ${roleUpdateLog.added} roles added\n` +
-          `• ${roleUpdateLog.existing} users already had the role\n`
-      );
-    } catch (error) {
-      console.error("Error executing Free Mint role updates:", error);
-      await interaction.editReply("An error occurred while updating free mint roles.");
-    }
   }
+
+  const [, , team, threshold] = interaction.customId.split("_");
+  
+  const statusMessage = await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x0099ff)
+        .setTitle("Moolalist Role Update Progress")
+        .setDescription("Starting role updates...")
+    ]
+  });
+
+  await interaction.update({
+    content: "Role update started. Check progress above ↑",
+    embeds: [],
+    components: [],
+  });
+
+  try {
+    let lastMessageTime = Date.now();
+    let messageToUpdate = statusMessage;
+
+    const updateProgress = async (progress: { processed: number, added: number, existing: number, total: number }) => {
+      try {
+        const now = Date.now();
+        
+        if (now - lastMessageTime > 840000) {
+          messageToUpdate = await interaction.channel.send({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0x0099ff)
+                .setTitle("Moolalist Role Update Progress (Continued)")
+                .setDescription("Continuing role updates...")
+            ]
+          });
+          lastMessageTime = now;
+        }
+
+        await messageToUpdate.edit({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x0099ff)
+              .setTitle("Moolalist Role Update Progress")
+              .setDescription(
+                `**Progress:**\n\n` +
+                `• ${progress.added} roles added\n` +
+                `• ${progress.existing} users already have the role\n` +
+                `• ${progress.processed} out of ${progress.total} users processed\n\n` +
+                `Process will continue in new message if this one gets too old.`
+              )
+          ]
+        });
+      } catch (err) {
+        console.error("Error updating status message:", err);
+        try {
+          messageToUpdate = await interaction.channel.send({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0x0099ff)
+                .setTitle("Moolalist Role Update Progress (Recovered)")
+                .setDescription(
+                  `**Progress:**\n\n` +
+                  `• ${progress.added} roles added\n` +
+                  `• ${progress.existing} users already have the role\n` +
+                  `• ${progress.processed} out of ${progress.total} users processed\n\n` +
+                  `Continuing updates...`
+                )
+            ]
+          });
+          lastMessageTime = Date.now();
+        } catch (msgErr) {
+          console.error("Failed to create recovery message:", msgErr);
+        }
+      }
+    };
+
+    const roleUpdateLog = await updateMoolalistRoles(
+      interaction.guild!,
+      team as "winning" | "losing",
+      Number(threshold),
+      false,
+      updateProgress
+    );
+
+    await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x0099ff)
+          .setTitle("Moolalist Role Update Complete")
+          .setDescription(
+            `**Final Results:**\n\n` +
+            `• ${roleUpdateLog.added} roles added\n` +
+            `• ${roleUpdateLog.existing} users already had the role\n` +
+            `• ${roleUpdateLog.total} total users processed`
+          )
+      ]
+    });
+  } catch (error) {
+    console.error("Error executing ML role updates:", error);
+    await interaction.channel.send({
+      content: "An error occurred during the role update process. Check the logs for details.",
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle("Role Update Error")
+          .setDescription(`Error: ${error.message}`)
+      ]
+    });
+  }
+}
+
+  // FM Button Handler
+if (interaction.customId.startsWith("confirm_fm_")) {
+  if (!hasAdminRole(interaction.member)) {
+    return interaction.reply({
+      content: "You don't have permission to confirm this action.",
+      ephemeral: true,
+    });
+  }
+
+  const [, , team, threshold] = interaction.customId.split("_");
+  
+  const statusMessage = await interaction.channel.send({
+    embeds: [
+      new EmbedBuilder()
+        .setColor(0x0099ff)
+        .setTitle("Free Mint Role Update Progress")
+        .setDescription("Starting role updates...")
+    ]
+  });
+
+  await interaction.update({
+    content: "Role update started. Check progress above ↑",
+    embeds: [],
+    components: [],
+  });
+
+  try {
+    let lastMessageTime = Date.now();
+    let messageToUpdate = statusMessage;
+
+    const updateProgress = async (progress: { processed: number, added: number, existing: number, total: number }) => {
+      try {
+        const now = Date.now();
+        
+        if (now - lastMessageTime > 840000) {
+          messageToUpdate = await interaction.channel.send({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0x0099ff)
+                .setTitle("Free Mint Role Update Progress (Continued)")
+                .setDescription("Continuing role updates...")
+            ]
+          });
+          lastMessageTime = now;
+        }
+
+        await messageToUpdate.edit({
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x0099ff)
+              .setTitle("Free Mint Role Update Progress")
+              .setDescription(
+                `**Progress:**\n\n` +
+                `• ${progress.added} roles added\n` +
+                `• ${progress.existing} users already have the role\n` +
+                `• ${progress.processed} out of ${progress.total} users processed\n\n` +
+                `Process will continue in new message if this one gets too old.`
+              )
+          ]
+        });
+      } catch (err) {
+        console.error("Error updating status message:", err);
+        try {
+          messageToUpdate = await interaction.channel.send({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0x0099ff)
+                .setTitle("Free Mint Role Update Progress (Recovered)")
+                .setDescription(
+                  `**Progress:**\n\n` +
+                  `• ${progress.added} roles added\n` +
+                  `• ${progress.existing} users already have the role\n` +
+                  `• ${progress.processed} out of ${progress.total} users processed\n\n` +
+                  `Continuing updates...`
+                )
+            ]
+          });
+          lastMessageTime = Date.now();
+        } catch (msgErr) {
+          console.error("Failed to create recovery message:", msgErr);
+        }
+      }
+    };
+
+    const roleUpdateLog = await updateFreeMintRoles(
+      interaction.guild!,
+      team as "winning" | "losing",
+      Number(threshold),
+      false,
+      updateProgress
+    );
+
+    await interaction.channel.send({
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x0099ff)
+          .setTitle("Free Mint Role Update Complete")
+          .setDescription(
+            `**Final Results:**\n\n` +
+            `• ${roleUpdateLog.added} roles added\n` +
+            `• ${roleUpdateLog.existing} users already had the role\n` +
+            `• ${roleUpdateLog.total} total users processed`
+          )
+      ]
+    });
+  } catch (error) {
+    console.error("Error executing FM role updates:", error);
+    await interaction.channel.send({
+      content: "An error occurred during the role update process. Check the logs for details.",
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0xFF0000)
+          .setTitle("Role Update Error")
+          .setDescription(`Error: ${error.message}`)
+      ]
+    });
+  }
+}
 
   // Leaderboard pagination
   const [action, teamOption, currentPage] = interaction.customId.split("_");
