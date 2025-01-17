@@ -2126,40 +2126,21 @@ if (interaction.customId === "confirm_purge") {
   });
 
   try {
-    const { data: zeroBalanceUsers, error } = await supabase
-      .from("users")
-      .select("discord_id, team")
-      .eq("points", 0)
-      .or("team.eq.bullas,team.eq.beras");
-
-    if (error) throw error;
+    // Get ALL zero balance users
+    const zeroBalanceUsers = await getAllZeroBalanceUsers();
+    if (!zeroBalanceUsers) throw new Error("Failed to fetch zero balance users");
 
     let removedCount = 0;
     let processedCount = 0;
     let errorCount = 0;
     const totalUsers = zeroBalanceUsers.length;
-
-    const updateProgress = async () => {
-      await statusMessage.edit({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x0099ff)
-            .setTitle("Zero Balance Purge Progress")
-            .setDescription(
-              `**Progress:**\n\n` +
-              `• ${removedCount} roles removed\n` +
-              `• ${processedCount} of ${totalUsers} users processed\n` +
-              `• ${errorCount} errors encountered\n\n` +
-              `Please wait while purge continues...`
-            )
-        ]
-      });
-    };
-
-    const BATCH_SIZE = 10;
+    
+    // Process in larger batches
+    const BATCH_SIZE = 50;
     for (let i = 0; i < zeroBalanceUsers.length; i += BATCH_SIZE) {
       const batch = zeroBalanceUsers.slice(i, Math.min(i + BATCH_SIZE, zeroBalanceUsers.length));
       
+      // Process batch
       for (const user of batch) {
         try {
           const member = await interaction.guild?.members.fetch(user.discord_id).catch(() => null);
@@ -2172,18 +2153,32 @@ if (interaction.customId === "confirm_purge") {
               removedCount++;
             }
           }
-        } catch (roleRemoveErr) {
-          console.error(`Error removing role from user ${user.discord_id}:`, roleRemoveErr);
+          processedCount++;
+        } catch (err) {
+          console.error(`Error processing user ${user.discord_id}:`, err);
           errorCount++;
-        }
-        
-        processedCount++;
-        if (processedCount % 10 === 0) {
-          await updateProgress();
+          processedCount++;
         }
       }
 
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Update progress every batch
+      await statusMessage.edit({
+        embeds: [
+          new EmbedBuilder()
+            .setColor(0x0099ff)
+            .setTitle("Zero Balance Purge Progress")
+            .setDescription(
+              `**Progress:**\n\n` +
+              `• ${removedCount} roles removed\n` +
+              `• ${processedCount} of ${totalUsers} users processed (${Math.round((processedCount / totalUsers) * 100)}%)\n` +
+              `• ${errorCount} errors encountered\n\n` +
+              `Please wait while purge continues...`
+            )
+        ]
+      });
+
+      // Small delay between batches
+      await new Promise(resolve => setTimeout(resolve, 500));
     }
 
     await statusMessage.edit({
