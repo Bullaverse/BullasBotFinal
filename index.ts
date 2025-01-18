@@ -24,7 +24,6 @@ import "dotenv/config";
 import express from "express";
 import fs from "fs";
 import http from "http";
-import { scheduleJob } from "node-schedule";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { v4 } from "uuid";
@@ -53,8 +52,8 @@ export const client = new Client({
     status: 'online',
     activities: [
       {
-        name: 'moola war',
-        type: 0, // "Playing"
+        name: 'BULLAS WIN THE MW',
+        type: 3, // "Watching"
       },
     ],
   },
@@ -68,23 +67,22 @@ process.on('unhandledRejection', (error) => {
   console.error('Unhandled promise rejection:', error);
 });
 
-
 /********************************************************************
  *                     ROLE CONSTANTS
  ********************************************************************/
 /**  
  *  Replace these with your actual role IDs from the Discord server.  
  */
-const WHITELIST_ROLE_ID        = "1263470313300295751";
-const MOOLALIST_ROLE_ID        = "1263470568536014870";
-const FREE_MINT_ROLE_ID        = "1328473525710884864";       // Free Mint Role
-const FREE_MINT_WINNER_ROLE_ID = "1263470790314164325";       // Free Mint Winner Role
-const MOOTARD_ROLE_ID          = "1281979123534925967";
-const NEW_WANKME_ROLE_ID       = "1328471474947883120";
-const WL_WINNER_ROLE_ID        = "1264963781419597916";
-const ML_WINNER_ROLE_ID        = "1267532607491407933";
-const BULL_ROLE_ID             = "1230207362145452103";
-const BEAR_ROLE_ID             = "1230207106896892006";
+const WHITELIST_ROLE_ID = "1263470313300295751";
+const MOOLALIST_ROLE_ID = "1263470568536014870";
+const FREE_MINT_ROLE_ID = "1328473525710884864"; // Free Mint Role
+const FREE_MINT_WINNER_ROLE_ID = "1263470790314164325"; // Free Mint Winner Role
+const MOOTARD_ROLE_ID = "1281979123534925967";
+const NEW_WANKME_ROLE_ID = "1328471474947883120";
+const WL_WINNER_ROLE_ID = "1264963781419597916";
+const ML_WINNER_ROLE_ID = "1267532607491407933";
+const BULL_ROLE_ID = "1230207362145452103";
+const BEAR_ROLE_ID = "1230207106896892006";
 
 // Admin role IDs
 const ADMIN_ROLE_IDS = [
@@ -110,339 +108,7 @@ export const maskAddress = (address: string) => {
   if (!address || address.length < 8) return address;
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 };
-/** Helper function to fetch all users with pagination */
-async function fetchAllEligibleUsers(team: string, threshold: number) {
-  let allUsers = [];
-  let page = 0;
-  const PAGE_SIZE = 1000;
-  
-  // Convert threshold to string with fixed precision
-  const preciseThreshold = threshold.toFixed(8);
-  console.log(`Fetching users for team ${team} with threshold >= ${preciseThreshold}`);
-  
-  while (true) {
-    const { data, error } = await supabase
-      .from("users")
-      .select("discord_id, points, team")
-      .eq("team", team)
-      .filter('points', 'gte', preciseThreshold) // Changed from .gte to .filter
-      .order("points", { ascending: false })
-      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
-    if (error) {
-      console.error("Error fetching users:", error);
-      break;
-    }
-
-    if (!data || data.length === 0) break;
-    
-    // Double-check threshold in JS for maximum precision
-    const filteredData = data.filter(user => {
-      const userPoints = Number(user.points.toFixed(8));
-      const thresholdNum = Number(preciseThreshold);
-      return userPoints >= thresholdNum;
-    });
-    
-    allUsers.push(...filteredData);
-    
-    if (data.length < PAGE_SIZE) break;
-    page++;
-  }
-
-  console.log(`Total eligible users found: ${allUsers.length}`);
-  return allUsers;
-}
-//PURGE
-async function getAllZeroBalanceUsers() {
-  let allUsers = [];
-  let page = 0;
-  const PAGE_SIZE = 1000;
-  
-  while (true) {
-    const { data, error } = await supabase
-      .from("users")
-      .select("discord_id, team")
-      .eq("points", 0)
-      .or("team.eq.bullas,team.eq.beras")
-      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
-
-    if (error) {
-      console.error("Error fetching zero balance users:", error);
-      break;
-    }
-
-    if (!data || data.length === 0) break;
-    
-    allUsers.push(...data);
-    
-    if (data.length < PAGE_SIZE) break;
-    page++;
-  }
-
-  return allUsers;
-}
-/********************************************************************
- *              TEAM POINTS & TOP PLAYERS HELPERS
- ********************************************************************/
-async function getTeamPoints() {
-  const [bullasData, berasData] = await Promise.all([
-    supabase.rpc("sum_points_for_team", { team_name: "bullas" }),
-    supabase.rpc("sum_points_for_team", { team_name: "beras" }),
-  ]);
-
-  return {
-    bullas: bullasData.data ?? 0,
-    beras: berasData.data ?? 0,
-  };
-}
-
-async function getTopPlayers(team: string, limit: number) {
-  const { data, error } = await supabase
-    .from("users")
-    .select("discord_id, address, points")
-    .eq("team", team)
-    .order("points", { ascending: false })
-    .limit(limit);
-
-  if (error) throw error;
-  return data;
-}
-// updaterolesfunction
-
-async function updateWhitelistRoles(
-  guild: Guild,
-  teamType: 'winning' | 'losing',
-  threshold: number,
-  isSimulation: boolean = false,
-  onProgress?: (progress: { processed: number, added: number, existing: number, total: number }) => Promise<void>
-) {
-  console.log(`${isSimulation ? 'Simulating' : 'Starting'} whitelist role update for ${teamType} team...`);
-
-  let roleUpdateLog = {
-    added: 0,
-    existing: 0,
-    total: 0,
-    processed: 0
-  };
-
-  const whitelistRole = guild.roles.cache.get(WHITELIST_ROLE_ID);
-  const wlWinnerRole = guild.roles.cache.get(WL_WINNER_ROLE_ID);
-
-  if (!whitelistRole || !wlWinnerRole) {
-    console.error("Whitelist roles not found. Aborting role update.");
-    return roleUpdateLog;
-  }
-
-  const teamPoints = await getTeamPoints();
-  const winningTeam = teamPoints.bullas > teamPoints.beras ? "bullas" : "beras";
-  const targetTeam = teamType === "winning" ? winningTeam : winningTeam === "bullas" ? "beras" : "bullas";
-
-  console.log(`Target team: ${targetTeam}, Threshold: ${threshold}`);
-
-  const players = await fetchAllEligibleUsers(targetTeam, threshold);
-  roleUpdateLog.total = players.length;
-  console.log(`Found ${roleUpdateLog.total} eligible players`);
-
-  const BATCH_SIZE = 10;
-  for (let i = 0; i < players.length; i += BATCH_SIZE) {
-    const batch = players.slice(i, Math.min(i + BATCH_SIZE, players.length));
-    
-    for (const player of batch) {
-      if (!player.discord_id) continue;
-
-      try {
-        const member = await guild.members.fetch(player.discord_id).catch(() => null);
-        if (!member) {
-          console.log(`Skipped user ${player.discord_id} - No longer in server`);
-          continue;
-        }
-
-        const hasWLRole = member.roles.cache.has(WHITELIST_ROLE_ID);
-        const hasWLWinnerRole = member.roles.cache.has(WL_WINNER_ROLE_ID);
-
-        if (!hasWLRole && !hasWLWinnerRole) {
-          if (!isSimulation) {
-            await member.roles.add(whitelistRole);
-          }
-          roleUpdateLog.added++;
-        } else {
-          roleUpdateLog.existing++;
-        }
-      } catch (err) {
-        console.error(`Error processing user ${player.discord_id}:`, err);
-      }
-
-      roleUpdateLog.processed++;
-      
-      // Update progress every 10 users or on final user
-      if (onProgress && (roleUpdateLog.processed % 10 === 0 || roleUpdateLog.processed === roleUpdateLog.total)) {
-        await onProgress(roleUpdateLog);
-      }
-    }
-
-    if (!isSimulation) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  }
-
-  return roleUpdateLog;
-}
-
-async function updateMoolalistRoles(
-  guild: Guild,
-  teamType: 'winning' | 'losing',
-  threshold: number,
-  isSimulation: boolean = false,
-  onProgress?: (progress: { processed: number, added: number, existing: number, total: number }) => Promise<void>
-) {
-  console.log(`${isSimulation ? 'Simulating' : 'Starting'} moolalist role update for ${teamType} team...`);
-
-  let roleUpdateLog = {
-    added: 0,
-    existing: 0,
-    total: 0,
-    processed: 0
-  };
-
-  const moolalistRole = guild.roles.cache.get(MOOLALIST_ROLE_ID);
-  const mlWinnerRole = guild.roles.cache.get(ML_WINNER_ROLE_ID);
-
-  if (!moolalistRole || !mlWinnerRole) {
-    console.error("Moolalist roles not found. Aborting role update.");
-    return roleUpdateLog;
-  }
-
-  const teamPoints = await getTeamPoints();
-  const winningTeam = teamPoints.bullas > teamPoints.beras ? "bullas" : "beras";
-  const targetTeam = teamType === "winning" ? winningTeam : winningTeam === "bullas" ? "beras" : "bullas";
-
-  console.log(`Target team: ${targetTeam}, Threshold: ${threshold}`);
-
-  const players = await fetchAllEligibleUsers(targetTeam, threshold);
-  roleUpdateLog.total = players.length;
-  console.log(`Found ${roleUpdateLog.total} eligible players`);
-
-  const BATCH_SIZE = 10;
-  for (let i = 0; i < players.length; i += BATCH_SIZE) {
-    const batch = players.slice(i, Math.min(i + BATCH_SIZE, players.length));
-    
-    for (const player of batch) {
-      if (!player.discord_id) continue;
-
-      try {
-        const member = await guild.members.fetch(player.discord_id).catch(() => null);
-        if (!member) {
-          console.log(`Skipped user ${player.discord_id} - No longer in server`);
-          continue;
-        }
-
-        const hasMLRole = member.roles.cache.has(MOOLALIST_ROLE_ID);
-        const hasMLWinnerRole = member.roles.cache.has(ML_WINNER_ROLE_ID);
-
-        if (!hasMLRole && !hasMLWinnerRole) {
-          if (!isSimulation) {
-            await member.roles.add(moolalistRole);
-          }
-          roleUpdateLog.added++;
-        } else {
-          roleUpdateLog.existing++;
-        }
-      } catch (err) {
-        console.error(`Error processing user ${player.discord_id}:`, err);
-      }
-
-      roleUpdateLog.processed++;
-      
-      if (onProgress && (roleUpdateLog.processed % 10 === 0 || roleUpdateLog.processed === roleUpdateLog.total)) {
-        await onProgress(roleUpdateLog);
-      }
-    }
-
-    if (!isSimulation) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  }
-
-  return roleUpdateLog;
-}
-
-async function updateFreeMintRoles(
-  guild: Guild,
-  teamType: 'winning' | 'losing',
-  threshold: number,
-  isSimulation: boolean = false,
-  onProgress?: (progress: { processed: number, added: number, existing: number, total: number }) => Promise<void>
-) {
-  console.log(`${isSimulation ? 'Simulating' : 'Starting'} free mint role update for ${teamType} team...`);
-
-  let roleUpdateLog = {
-    added: 0,
-    existing: 0,
-    total: 0,
-    processed: 0
-  };
-
-  const freeMintRole = guild.roles.cache.get(FREE_MINT_ROLE_ID);
-  const fmWinnerRole = guild.roles.cache.get(FREE_MINT_WINNER_ROLE_ID);
-
-  if (!freeMintRole || !fmWinnerRole) {
-    console.error("Free mint roles not found. Aborting role update.");
-    return roleUpdateLog;
-  }
-
-  const teamPoints = await getTeamPoints();
-  const winningTeam = teamPoints.bullas > teamPoints.beras ? "bullas" : "beras";
-  const targetTeam = teamType === "winning" ? winningTeam : winningTeam === "bullas" ? "beras" : "bullas";
-
-  console.log(`Target team: ${targetTeam}, Threshold: ${threshold}`);
-
-  const players = await fetchAllEligibleUsers(targetTeam, threshold);
-  roleUpdateLog.total = players.length;
-  console.log(`Found ${roleUpdateLog.total} eligible players`);
-
-  const BATCH_SIZE = 10;
-  for (let i = 0; i < players.length; i += BATCH_SIZE) {
-    const batch = players.slice(i, Math.min(i + BATCH_SIZE, players.length));
-    
-    for (const player of batch) {
-      if (!player.discord_id) continue;
-
-      try {
-        const member = await guild.members.fetch(player.discord_id).catch(() => null);
-        if (!member) {
-          console.log(`Skipped user ${player.discord_id} - No longer in server`);
-          continue;
-        }
-
-        const hasFMRole = member.roles.cache.has(FREE_MINT_ROLE_ID);
-        const hasFMWinnerRole = member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID);
-
-        if (!hasFMRole && !hasFMWinnerRole) {
-          if (!isSimulation) {
-            await member.roles.add(freeMintRole);
-          }
-          roleUpdateLog.added++;
-        } else {
-          roleUpdateLog.existing++;
-        }
-      } catch (err) {
-        console.error(`Error processing user ${player.discord_id}:`, err);
-      }
-
-      roleUpdateLog.processed++;
-      
-      if (onProgress && (roleUpdateLog.processed % 10 === 0 || roleUpdateLog.processed === roleUpdateLog.total)) {
-        await onProgress(roleUpdateLog);
-      }
-    }
-
-    if (!isSimulation) {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-  }
-
-  return roleUpdateLog;
-}
 /********************************************************************
  *                     CSV CREATION & SAVING
  ********************************************************************/
@@ -452,7 +118,7 @@ async function createCSV(data: any[], includeDiscordId: boolean = false, guild: 
     : "address,points,wl_role,ml_role,free_mint_role\n";
 
   const memberIds = data.map((user) => user.discord_id).filter(Boolean);
-  const membersMap = new Map();
+  const membersMap = new Map<string, GuildMember>();
 
   for (let i = 0; i < memberIds.length; i += 50) {
     const batch = memberIds.slice(i, i + 50);
@@ -468,18 +134,18 @@ async function createCSV(data: any[], includeDiscordId: boolean = false, guild: 
   const rows = data.map((user) => {
     const member = membersMap.get(user.discord_id);
     const hasWL =
-      member?.roles.cache.has(WHITELIST_ROLE_ID) ||
-      member?.roles.cache.has(WL_WINNER_ROLE_ID)
+      (member?.roles.cache.has(WHITELIST_ROLE_ID) ||
+        member?.roles.cache.has(WL_WINNER_ROLE_ID))
         ? "Y"
         : "N";
     const hasML =
-      member?.roles.cache.has(MOOLALIST_ROLE_ID) ||
-      member?.roles.cache.has(ML_WINNER_ROLE_ID)
+      (member?.roles.cache.has(MOOLALIST_ROLE_ID) ||
+        member?.roles.cache.has(ML_WINNER_ROLE_ID))
         ? "Y"
         : "N";
     const hasFreeMint =
-      member?.roles.cache.has(FREE_MINT_ROLE_ID) ||
-      member?.roles.cache.has(FREE_MINT_WINNER_ROLE_ID)
+      (member?.roles.cache.has(FREE_MINT_ROLE_ID) ||
+        member?.roles.cache.has(FREE_MINT_WINNER_ROLE_ID))
         ? "Y"
         : "N";
 
@@ -515,158 +181,36 @@ const EXCLUDED_USER_IDS = [
 ];
 
 /********************************************************************
- *               WHITE-LIST MINIMUM (CAN BE CHANGED)
- ********************************************************************/
-let WHITELIST_MINIMUM = 100;
-
-/********************************************************************
  *               DEFINE SLASH COMMANDS
  ********************************************************************/
 /**
  * 1) /updateroles           (with simulation)
  * 2) /alreadywanked         (mass-assign NEW_WANKME_ROLE_ID)
- * 3) /purgezerobalance      (remove roles for 0 balance)
- * 4) /transfer              (admin-only transfer points)
- * 5) /updatewallet          (update user's wallet)
- * 6) /moola                 (check user moola)
- * 7) /warstatus             (check bullas vs beras total)
  * 8) /snapshot              (admin-only CSV snapshot)
- * 9) /fine                  (admin-only fine command)
- * 10) /updatewhitelistminimum (admin-only)
  * 11) /leaderboard          (paginated leaderboard)
  */
 
-//UPDATEWL
 const commands = [
-  new SlashCommandBuilder()
-  .setName("updatewl")
-  .setDescription("Update Whitelist roles")
-  .addStringOption((option) =>
-    option
-      .setName("team")
-      .setDescription("Team to update WL roles for")
-      .setRequired(true)
-      .addChoices({ name: "Winning", value: "winning" }, { name: "Losing", value: "losing" })
-  )
-  .addNumberOption((option) =>  // Changed from addIntegerOption to addNumberOption
-    option
-      .setName("threshold")
-      .setDescription("MOOLA threshold for WL role")
-      .setRequired(true)
-  ),
-//UpdateML
-new SlashCommandBuilder()
-  .setName("updateml")
-  .setDescription("Update Moolalist roles")
-  .addStringOption((option) =>
-    option
-      .setName("team")
-      .setDescription("Team to update ML roles for")
-      .setRequired(true)
-      .addChoices({ name: "Winning", value: "winning" }, { name: "Losing", value: "losing" })
-  )
-  .addNumberOption((option) =>  // Changed from addIntegerOption to addNumberOption
-    option
-      .setName("threshold")
-      .setDescription("MOOLA threshold for ML role")
-      .setRequired(true)
-  ),
-//UPDATEFREEMINT
-new SlashCommandBuilder()
-  .setName("updatefreemint")
-  .setDescription("Update Free Mint roles")
-  .addStringOption((option) =>
-    option
-      .setName("team")
-      .setDescription("Team to update Free Mint roles for")
-      .setRequired(true)
-      .addChoices({ name: "Winning", value: "winning" }, { name: "Losing", value: "losing" })
-  )
-  .addNumberOption((option) =>  // Changed from addIntegerOption to addNumberOption
-    option
-      .setName("threshold")
-      .setDescription("MOOLA threshold for Free Mint role")
-      .setRequired(true)
-  ),
-
   // ====== 2) /alreadywanked ======
   new SlashCommandBuilder()
     .setName("alreadywanked")
     .setDescription("Assign new role to all verified users (Admin only)"),
-
-  // ====== 3) /purgezerobalance ======
-  new SlashCommandBuilder()
-    .setName("purgezerobalance")
-    .setDescription("Remove team roles from accounts with 0 moola balance (Admin only)"),
-
-  // ====== 4) /transfer ======
-  new SlashCommandBuilder()
-    .setName("transfer")
-    .setDescription("Transfer points to another user (Admin only)")
-    .addUserOption((option) =>
-      option
-        .setName("user")
-        .setDescription("The user to transfer points to")
-        .setRequired(true)
-    )
-    .addIntegerOption((option) =>
-      option
-        .setName("amount")
-        .setDescription("The amount of points to transfer")
-        .setRequired(true)
-    ),
 
   // ====== 5) /updatewallet ======
   new SlashCommandBuilder()
     .setName("updatewallet")
     .setDescription("Update your wallet address"),
 
-  // ====== 6) /moola ======
-  new SlashCommandBuilder()
-    .setName("moola")
-    .setDescription("Check your moola balance"),
-
-  // ====== 7) /warstatus ======
-  new SlashCommandBuilder()
-    .setName("warstatus")
-    .setDescription("Check the current war status"),
-
   // ====== 8) /snapshot (Admin only) ======
   new SlashCommandBuilder()
     .setName("snapshot")
     .setDescription("Take a snapshot of the current standings"),
 
-  // ====== 9) /fine (Admin only) ======
+  // ====== /wankme ======
   new SlashCommandBuilder()
-    .setName("fine")
-    .setDescription("Fine a user (Admin only)")
-    .addUserOption((option) =>
-      option
-        .setName("user")
-        .setDescription("The user to fine")
-        .setRequired(true)
-    )
-    .addIntegerOption((option) =>
-      option
-        .setName("amount")
-        .setDescription("The amount to fine")
-        .setRequired(true)
-    ),
-
-  // ====== 10) /updatewhitelistminimum (Admin only) ======
-  new SlashCommandBuilder()
-    .setName("updatewhitelistminimum")
-    .setDescription("Update the whitelist minimum (Admin only)")
-    .addIntegerOption((option) =>
-      option
-        .setName("minimum")
-        .setDescription("The new minimum value")
-        .setRequired(true)
-    ),
-    //wankme
-    new SlashCommandBuilder()
     .setName("wankme")
     .setDescription("Get started with Moola Wars and earn your roles"),
+
   // ====== 11) /leaderboard ======
   new SlashCommandBuilder()
     .setName("leaderboard")
@@ -677,7 +221,6 @@ new SlashCommandBuilder()
         .setDescription("Team leaderboard to view")
         .setRequired(true)
         .addChoices(
-          { name: "All", value: "all" },
           { name: "Bullas", value: "bullas" },
           { name: "Beras", value: "beras" }
         )
@@ -687,7 +230,7 @@ new SlashCommandBuilder()
         .setName("page")
         .setDescription("Page number")
         .setMinValue(1)
-    ),
+    )
 ];
 
 /********************************************************************
@@ -707,7 +250,7 @@ client.once("ready", async () => {
 
   const rest = new REST({ version: "10" }).setToken(discordBotToken!);
 
-  // Replace with your actual server (guild) ID
+  
   const GUILD_ID = "1228994421966766141";
 
   try {
@@ -738,201 +281,11 @@ client.once("ready", async () => {
   }
 });
 
-
 /********************************************************************
  *                MAIN INTERACTION HANDLER
  ********************************************************************/
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isCommand()) return;
-
-  // -------------------------------------------------------
-  // 1) /updatewl
-  // -------------------------------------------------------
-  if (interaction.commandName === "updatewl") {
-    if (!hasAdminRole(interaction.member)) {
-      return interaction.reply({
-        content: "You don't have permission to use this command.",
-        ephemeral: true,
-      });
-    }
-
-    await interaction.deferReply();
-    const guild = interaction.guild;
-    if (!guild) {
-      return interaction.editReply("Failed to simulate: Guild not found.");
-    }
-
-    const team = interaction.options.getString("team", true) as "winning" | "losing";
-    const threshold = interaction.options.getNumber("threshold", true);
-
-    try {
-      // Simulation
-      const simulationLog = await updateWhitelistRoles(
-        guild,
-        team,
-        threshold,
-        true // isSimulation
-      );
-
-      const simResultMsg = new EmbedBuilder()
-    .setColor(0x0099ff)
-    .setTitle("Whitelist Role Update Simulation")
-    .setDescription(
-      `**Here's what will happen if you proceed:**\n\n` +
-      `**Whitelist Role:**\n` +
-      `• ${simulationLog.added} users will receive the role\n` +
-      `• ${simulationLog.existing} users already have it\n` +
-      `• ${simulationLog.total - (simulationLog.added + simulationLog.existing)} users skipped (left server)\n\n` +
-      `Threshold: ${threshold.toFixed(2)} points\n\n` +
-      `Would you like to proceed with these changes?`
-    );
-
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`confirm_wl_${team}_${threshold}`)
-          .setLabel("Proceed with Update")
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId("cancel_wl_update")
-          .setLabel("Cancel")
-          .setStyle(ButtonStyle.Secondary)
-      );
-
-      await interaction.editReply({
-        embeds: [simResultMsg],
-        components: [row],
-      });
-    } catch (error) {
-      console.error("Error in WL update simulation:", error);
-      await interaction.editReply("An error occurred while simulating WL role updates.");
-    }
-  }
-
-  // -------------------------------------------------------
-  // 2) /updateml
-  // -------------------------------------------------------
-  if (interaction.commandName === "updateml") {
-    if (!hasAdminRole(interaction.member)) {
-      return interaction.reply({
-        content: "You don't have permission to use this command.",
-        ephemeral: true,
-      });
-    }
-
-    await interaction.deferReply();
-    const guild = interaction.guild;
-    if (!guild) {
-      return interaction.editReply("Failed to simulate: Guild not found.");
-    }
-
-    const team = interaction.options.getString("team", true) as "winning" | "losing";
-    const threshold = interaction.options.getNumber("threshold", true);
-
-    try {
-      // Simulation
-      const simulationLog = await updateMoolalistRoles(
-        guild,
-        team,
-        threshold,
-        true // isSimulation
-      );
-
-      const simResultMsg = new EmbedBuilder()
-    .setColor(0x0099ff)
-    .setTitle("Moolalist Role Update Simulation")
-    .setDescription(
-      `**Here's what will happen if you proceed:**\n\n` +
-      `**Moolalist Role:**\n` +
-      `• ${simulationLog.added} users will receive the role\n` +
-      `• ${simulationLog.existing} users already have it\n` +
-      `• ${simulationLog.total - (simulationLog.added + simulationLog.existing)} users skipped (left server)\n\n` +
-      `Threshold: ${threshold.toFixed(2)} points\n\n` +
-      `Would you like to proceed with these changes?`
-    );
-
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`confirm_ml_${team}_${threshold}`)
-          .setLabel("Proceed with Update")
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId("cancel_ml_update")
-          .setLabel("Cancel")
-          .setStyle(ButtonStyle.Secondary)
-      );
-
-      await interaction.editReply({
-        embeds: [simResultMsg],
-        components: [row],
-      });
-    } catch (error) {
-      console.error("Error in ML update simulation:", error);
-      await interaction.editReply("An error occurred while simulating ML role updates.");
-    }
-  }
-
-  // -------------------------------------------------------
-  // 3) /updatefreemint
-  // -------------------------------------------------------
-  if (interaction.commandName === "updatefreemint") {
-    if (!hasAdminRole(interaction.member)) {
-      return interaction.reply({
-        content: "You don't have permission to use this command.",
-        ephemeral: true,
-      });
-    }
-
-    await interaction.deferReply();
-    const guild = interaction.guild;
-    if (!guild) {
-      return interaction.editReply("Failed to simulate: Guild not found.");
-    }
-
-    const team = interaction.options.getString("team", true) as "winning" | "losing";
-    const threshold = interaction.options.getNumber("threshold", true);
-
-    try {
-      // Simulation
-      const simulationLog = await updateFreeMintRoles(
-        guild,
-        team,
-        threshold,
-        true // isSimulation
-      );
-
-      const simResultMsg = new EmbedBuilder()
-    .setColor(0x0099ff)
-    .setTitle("Free Mint Role Update Simulation")
-    .setDescription(
-      `**Here's what will happen if you proceed:**\n\n` +
-      `**Free Mint Role:**\n` +
-      `• ${simulationLog.added} users will receive the role\n` +
-      `• ${simulationLog.existing} users already have it\n` +
-      `• ${simulationLog.total - (simulationLog.added + simulationLog.existing)} users skipped (left server)\n\n` +
-      `Threshold: ${threshold.toFixed(2)} points\n\n` +
-      `Would you like to proceed with these changes?`
-    );
-
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`confirm_fm_${team}_${threshold}`)
-          .setLabel("Proceed with Update")
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId("cancel_fm_update")
-          .setLabel("Cancel")
-          .setStyle(ButtonStyle.Secondary)
-      );
-
-      await interaction.editReply({
-        embeds: [simResultMsg],
-        components: [row],
-      });
-    } catch (error) {
-      console.error("Error in Free Mint update simulation:", error);
-      await interaction.editReply("An error occurred while simulating Free Mint role updates.");
-    }
-  }
 
   // -------------------------------------------------------
   // /alreadywanked (admin)
@@ -947,7 +300,7 @@ client.on("interactionCreate", async (interaction) => {
     }
 
     // Create a new channel message instead of using interaction reply
-    const statusMessage = await interaction.channel.send("Starting role assignment process...");
+    let statusMessage = await interaction.channel.send("Starting role assignment process...");
     await interaction.reply({ content: "Process started! Check status message above.", ephemeral: true });
 
     try {
@@ -987,7 +340,7 @@ client.on("interactionCreate", async (interaction) => {
         const batchSize = 100;
         for (let i = 0; i < verifiedUsers.length; i += batchSize) {
           const batch = verifiedUsers.slice(i, i + batchSize);
-          
+
           for (const user of batch) {
             if (!user?.discord_id) {
               totalErrors++;
@@ -996,7 +349,7 @@ client.on("interactionCreate", async (interaction) => {
 
             try {
               const member = await guild.members.fetch(user.discord_id).catch(() => null);
-              
+
               if (member) {
                 if (!member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
                   await member.roles.add(newRole);
@@ -1087,264 +440,106 @@ client.on("interactionCreate", async (interaction) => {
       }
     }
   }
-  //wankme
+
+  // -------------------------------------------------------
+  // /wankme
+  // -------------------------------------------------------
   if (interaction.commandName === "wankme") {
     const userId = interaction.user.id;
     const uuid = v4();
 
     const { data: userData } = await supabase
-        .from("users")
-        .select("*")
-        .eq("discord_id", userId)
-        .single();
-
-    if (userData) {
-        // User is already verified, let's restore their role if they don't have it
-        const member = interaction.member as GuildMember;
-        const newRole = interaction.guild?.roles.cache.get(NEW_WANKME_ROLE_ID);
-        
-        if (member && newRole && !member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
-            try {
-                await member.roles.add(newRole);
-                await interaction.reply({
-                    content: "✅ Your verified status has been restored!",
-                    ephemeral: true
-                });
-                return;
-            } catch (error) {
-                console.error("Error restoring role:", error);
-            }
-        }
-
-        await interaction.reply({
-            content: `You have already linked your account. Your linked account: \`${maskAddress(userData.address)}\``,
-            ephemeral: true
-        });
-        return;
-    }
-    const { error } = await supabase
-        .from("tokens")
-        .insert({ token: uuid, discord_id: userId, used: false })
-        .single();
-
-    if (error) {
-        console.error("Error inserting token:", error);
-        await interaction.reply({
-            content: "An error occurred while generating the token.",
-            ephemeral: true,
-        });
-        return;
-    }
-
-    const vercelUrl = `${process.env.VERCEL_URL}/game?token=${uuid}&discord=${userId}`;
-    await interaction.reply({
-        content: `Hey ${interaction.user.username}, to link your Discord account to your address click this link:\n\n${vercelUrl}`,
-        ephemeral: true,
-    });
-
-    // Start watching for verification
-    const checkInterval = setInterval(async () => {
-        const { data: checkUser } = await supabase
-            .from("users")
-            .select("*")
-            .eq("discord_id", userId)
-            .single();
-
-        if (checkUser) {
-            clearInterval(checkInterval); // Stop checking once verified
-            try {
-                const member = interaction.member as GuildMember;
-                
-                // Add NEW_WANKME_ROLE
-                const newRole = interaction.guild?.roles.cache.get(NEW_WANKME_ROLE_ID);
-                if (member && newRole && !member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
-                    await member.roles.add(newRole);
-                    console.log(`Added NEW_WANKME_ROLE to user ${userId}`);
-                }
-
-                // Remove MOOTARD_ROLE
-                const mootardRole = interaction.guild?.roles.cache.get(MOOTARD_ROLE_ID);
-                if (member && mootardRole && member.roles.cache.has(MOOTARD_ROLE_ID)) {
-                    await member.roles.remove(mootardRole);
-                    console.log(`Removed MOOTARD_ROLE from user ${userId}`);
-                }
-
-                // Send a followup message
-                await interaction.followUp({
-                    content: "✅ Verification complete! Your roles have been updated.",
-                    ephemeral: true
-                });
-            } catch (error) {
-                console.error('Error updating roles:', error);
-            }
-        }
-    }, 5000); // Check every 5 seconds
-
-    // Stop checking after 5 minutes
-    setTimeout(() => {
-        clearInterval(checkInterval);
-    }, 300000);
-}
-  // -------------------------------------------------------
-  // /purgezerobalance (admin)
-  // -------------------------------------------------------
-  if (interaction.commandName === "purgezerobalance") {
-    if (!hasAdminRole(interaction.member)) {
-      await interaction.reply({
-        content: "You don't have permission to use this command.",
-        ephemeral: true,
-      });
-      return;
-    }
-
-    await interaction.deferReply();
-
-    try {
-      // Get all zero balance users with pagination
-      const zeroBalanceUsers = await getAllZeroBalanceUsers();
-      
-      let simulationResults = {
-        toRemove: 0,
-        notInServer: 0,
-        total: zeroBalanceUsers.length
-      };
-
-      // Quick simulation check
-      for (const user of zeroBalanceUsers) {
-        try {
-          const member = await interaction.guild?.members.fetch(user.discord_id).catch(() => null);
-          if (member) {
-            if ((user.team === "bullas" && member.roles.cache.has(BULL_ROLE_ID)) ||
-                (user.team === "beras" && member.roles.cache.has(BEAR_ROLE_ID))) {
-              simulationResults.toRemove++;
-            }
-          } else {
-            simulationResults.notInServer++;
-          }
-        } catch (err) {
-          simulationResults.notInServer++;
-        }
-      }
-
-      const simResultMsg = new EmbedBuilder()
-        .setColor(0x0099ff)
-        .setTitle("Zero Balance Purge Simulation")
-        .setDescription(
-          `**Here's what will happen if you proceed:**\n\n` +
-          `• ${simulationResults.toRemove} roles will be removed\n` +
-          `• ${simulationResults.notInServer} users are no longer in server\n` +
-          `• ${simulationResults.total} total accounts with 0 balance\n\n` +
-          `Would you like to proceed with these changes?`
-        );
-
-      const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-        new ButtonBuilder()
-          .setCustomId("confirm_purge")
-          .setLabel("Proceed with Purge")
-          .setStyle(ButtonStyle.Primary),
-        new ButtonBuilder()
-          .setCustomId("cancel_purge")
-          .setLabel("Cancel")
-          .setStyle(ButtonStyle.Secondary)
-      );
-
-      await interaction.editReply({
-        embeds: [simResultMsg],
-        components: [row],
-      });
-    } catch (err) {
-      console.error("Error in purge simulation:", err);
-      await interaction.editReply("An error occurred while simulating the purge.");
-    }
-}
-
-  // -------------------------------------------------------
-  // /transfer (admin only)
-  // -------------------------------------------------------
-  if (interaction.commandName === "transfer") {
-    if (!hasAdminRole(interaction.member)) {
-      await interaction.reply({
-        content: "You don't have permission to use this command.",
-        ephemeral: true,
-      });
-      return;
-    }
-
-    const userId = interaction.user.id;
-    const targetUser = interaction.options.getUser("user");
-    const amount = interaction.options.get("amount")?.value as number;
-
-    if (!targetUser || !amount) {
-      await interaction.reply("Please provide a valid user and amount.");
-      return;
-    }
-
-    const { data: senderData, error: senderError } = await supabase
       .from("users")
       .select("*")
       .eq("discord_id", userId)
       .single();
 
-    if (senderError || !senderData) {
-      console.error("Error fetching sender:", senderError);
-      await interaction.reply("An error occurred while fetching the sender.");
+    if (userData) {
+      // User is already verified, let's restore their role if they don't have it
+      const member = interaction.member as GuildMember;
+      const newRole = interaction.guild?.roles.cache.get(NEW_WANKME_ROLE_ID);
+
+      if (member && newRole && !member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+        try {
+          await member.roles.add(newRole);
+          await interaction.reply({
+            content: "✅ Your verified status has been restored!",
+            ephemeral: true
+          });
+          return;
+        } catch (error) {
+          console.error("Error restoring role:", error);
+        }
+      }
+
+      await interaction.reply({
+        content: `You have already linked your account. Your linked account: \`${maskAddress(userData.address)}\``,
+        ephemeral: true
+      });
       return;
     }
-
-    if (senderData.points < amount) {
-      await interaction.reply("Insufficient points to transfer.");
-      return;
-    }
-
-    const { data: receiverData, error: receiverError } = await supabase
-      .from("users")
-      .select("*")
-      .eq("discord_id", targetUser.id)
+    const { error } = await supabase
+      .from("tokens")
+      .insert({ token: uuid, discord_id: userId, used: false })
       .single();
 
-    if (receiverError) {
-      console.error("Error fetching receiver:", receiverError);
-      await interaction.reply("An error occurred while fetching the receiver.");
+    if (error) {
+      console.error("Error inserting token:", error);
+      await interaction.reply({
+        content: "An error occurred while generating the token.",
+        ephemeral: true,
+      });
       return;
     }
 
-    if (!receiverData) {
-      await interaction.reply("The specified user does not exist.");
-      return;
-    }
+    const vercelUrl = `${process.env.VERCEL_URL}/game?token=${uuid}&discord=${userId}`;
+    await interaction.reply({
+      content: `Hey ${interaction.user.username}, to link your Discord account to your address click this link:\n\n${vercelUrl}`,
+      ephemeral: true,
+    });
 
-    const senderPoints = new Decimal(senderData.points);
-    const receiverPoints = new Decimal(receiverData.points);
-    const transferAmount = new Decimal(amount);
+    // Start watching for verification
+    const checkInterval = setInterval(async () => {
+      const { data: checkUser } = await supabase
+        .from("users")
+        .select("*")
+        .eq("discord_id", userId)
+        .single();
 
-    const updatedSenderPoints = senderPoints.minus(transferAmount);
-    const updatedReceiverPoints = receiverPoints.plus(transferAmount);
+      if (checkUser) {
+        clearInterval(checkInterval); // Stop checking once verified
+        try {
+          const member = interaction.member as GuildMember;
 
-    const { error: senderUpdateError } = await supabase
-      .from("users")
-      .update({ points: updatedSenderPoints.toNumber() })
-      .eq("discord_id", userId);
+          // Add NEW_WANKME_ROLE
+          const newRole = interaction.guild?.roles.cache.get(NEW_WANKME_ROLE_ID);
+          if (member && newRole && !member.roles.cache.has(NEW_WANKME_ROLE_ID)) {
+            await member.roles.add(newRole);
+            console.log(`Added NEW_WANKME_ROLE to user ${userId}`);
+          }
 
-    if (senderUpdateError) {
-      console.error("Error updating sender points:", senderUpdateError);
-      await interaction.reply("An error occurred while updating sender points.");
-      return;
-    }
+          // Remove MOOTARD_ROLE
+          const mootardRole = interaction.guild?.roles.cache.get(MOOTARD_ROLE_ID);
+          if (member && mootardRole && member.roles.cache.has(MOOTARD_ROLE_ID)) {
+            await member.roles.remove(mootardRole);
+            console.log(`Removed MOOTARD_ROLE from user ${userId}`);
+          }
 
-    const { error: receiverUpdateError } = await supabase
-      .from("users")
-      .update({ points: updatedReceiverPoints.toNumber() })
-      .eq("discord_id", targetUser.id);
+          // Send a followup message
+          await interaction.followUp({
+            content: "✅ Verification complete! Your roles have been updated.",
+            ephemeral: true
+          });
+        } catch (error) {
+          console.error('Error updating roles:', error);
+        }
+      }
+    }, 5000); // Check every 5 seconds
 
-    if (receiverUpdateError) {
-      console.error("Error updating receiver points:", receiverUpdateError);
-      await interaction.reply("An error occurred while updating receiver points.");
-      return;
-    }
-
-    await interaction.reply(
-      `Successfully transferred ${amount} points to <@${targetUser.id}>.`
-    );
+    // Stop checking after 5 minutes
+    setTimeout(() => {
+      clearInterval(checkInterval);
+    }, 300000);
   }
 
   // -------------------------------------------------------
@@ -1389,74 +584,6 @@ client.on("interactionCreate", async (interaction) => {
   }
 
   // -------------------------------------------------------
-  // /moola
-  // -------------------------------------------------------
-  if (interaction.commandName === "moola") {
-    const userId = interaction.user.id;
-
-    const { data, error } = await supabase
-      .from("users")
-      .select("*")
-      .eq("discord_id", userId)
-      .single();
-
-    if (error) {
-      console.error("Error fetching user:", error);
-      await interaction.reply("An error occurred while fetching the user.");
-    } else if (!data) {
-      await interaction.reply("No account found for your Discord user. Try /wankme first.");
-    } else {
-      const moolaEmbed = new EmbedBuilder()
-        .setColor(0xffd700)
-        .setTitle(`${interaction.user.username}'s moola`)
-        .setDescription(`You have ${data.points} moola. 🍯`)
-        .setThumbnail(interaction.user.displayAvatarURL())
-        .setTimestamp();
-
-      await interaction.reply({
-        embeds: [moolaEmbed],
-      });
-    }
-  }
-
-  // -------------------------------------------------------
-  // /warstatus
-  // -------------------------------------------------------
-  if (interaction.commandName === "warstatus") {
-    try {
-      const [bullasData, berasData] = await Promise.all([
-        supabase.rpc("sum_points_for_team", { team_name: "bullas" }),
-        supabase.rpc("sum_points_for_team", { team_name: "beras" }),
-      ]);
-
-      const bullas = bullasData.data ?? 0;
-      const beras = berasData.data ?? 0;
-
-      const embed = new EmbedBuilder()
-        .setTitle("🏆 Moola War Status")
-        .setDescription(`The battle between the Bullas and Beras rages on!`)
-        .addFields(
-          {
-            name: "🐂 Bullas",
-            value: `moola (mL): ${bullas}`,
-            inline: true,
-          },
-          {
-            name: "🐻 Beras",
-            value: `moola (mL): ${beras}`,
-            inline: true,
-          }
-        )
-        .setColor("#FF0000");
-
-      await interaction.reply({ embeds: [embed] });
-    } catch (error) {
-      console.error("Error fetching war status:", error);
-      await interaction.reply("An error occurred while fetching the war status.");
-    }
-  }
-
-  // -------------------------------------------------------
   // /snapshot (admin only)
   // -------------------------------------------------------
   if (interaction.commandName === "snapshot") {
@@ -1478,118 +605,29 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
 
-      const teamPoints = await getTeamPoints();
-      const winningTeam = teamPoints.bullas > teamPoints.beras ? "bullas" : "beras";
-      const losingTeam = winningTeam === "bullas" ? "beras" : "bullas";
+      // Get all players sorted by points
+      const { data: allPlayers, error } = await supabase
+        .from("users")
+        .select("discord_id, address, points, team")
+        .order("points", { ascending: false });
 
-      const winningTopPlayers = await getTopPlayers(winningTeam, 2000);
-      const losingTopPlayers = await getTopPlayers(losingTeam, 700);
-      const allPlayers = await getTopPlayers(winningTeam, Number.MAX_SAFE_INTEGER);
-      allPlayers.push(...(await getTopPlayers(losingTeam, Number.MAX_SAFE_INTEGER)));
-      allPlayers.sort((a, b) => b.points - a.points);
+      if (error) throw error;
 
-      const winningCSV = await createCSV(winningTopPlayers, false, guild);
-      const losingCSV = await createCSV(losingTopPlayers, false, guild);
+      // Create and save the CSV
       const allCSV = await createCSV(allPlayers, true, guild);
-
-      const winningFile = await saveCSV(winningCSV, `top_2000_${winningTeam}.csv`);
-      const losingFile = await saveCSV(losingCSV, `top_700_${losingTeam}.csv`);
       const allFile = await saveCSV(allCSV, `all_players.csv`);
 
       await interaction.editReply({
-        content: `Here are the snapshot files with role information:`,
-        files: [winningFile, losingFile, allFile],
+        content: `Here is the snapshot file with role information:`,
+        files: [allFile],
       });
 
-      fs.unlinkSync(winningFile);
-      fs.unlinkSync(losingFile);
+      // Clean up the file
       fs.unlinkSync(allFile);
     } catch (error) {
       console.error("Error handling snapshot command:", error);
       await interaction.editReply("An error occurred while processing the snapshot command.");
     }
-  }
-
-  // -------------------------------------------------------
-  // /fine (admin only)
-  // -------------------------------------------------------
-  if (interaction.commandName === "fine") {
-    if (!hasAdminRole(interaction.member)) {
-      await interaction.reply({
-        content: "You don't have permission to use this command.",
-        ephemeral: true,
-      });
-      return;
-    }
-
-    const targetUser = interaction.options.getUser("user");
-    const amount = interaction.options.get("amount")?.value as number;
-
-    if (!targetUser || !amount || amount <= 0) {
-      await interaction.reply("Please provide a valid user and a positive amount.");
-      return;
-    }
-
-    try {
-      const { data: userData, error: userError } = await supabase
-        .from("users")
-        .select("*")
-        .eq("discord_id", targetUser.id)
-        .single();
-
-      if (userError || !userData) {
-        await interaction.reply("User not found or an error occurred.");
-        return;
-      }
-
-      const currentPoints = new Decimal(userData.points);
-      const fineAmount = new Decimal(amount);
-
-      if (currentPoints.lessThan(fineAmount)) {
-        await interaction.reply("The user doesn't have enough points for this fine.");
-        return;
-      }
-
-      const updatedPoints = currentPoints.minus(fineAmount);
-
-      const { error: updateError } = await supabase
-        .from("users")
-        .update({ points: updatedPoints.toNumber() })
-        .eq("discord_id", targetUser.id);
-
-      if (updateError) {
-        throw new Error("Failed to update user points");
-      }
-
-      await interaction.reply(
-        `Successfully fined <@${targetUser.id}> ${amount} points. Their new balance is ${updatedPoints} points.`
-      );
-    } catch (error) {
-      console.error("Error handling fine command:", error);
-      await interaction.reply("An error occurred while processing the fine command.");
-    }
-  }
-
-  // -------------------------------------------------------
-  // /updatewhitelistminimum (admin only)
-  // -------------------------------------------------------
-  if (interaction.commandName === "updatewhitelistminimum") {
-    if (!hasAdminRole(interaction.member)) {
-      await interaction.reply({
-        content: "You don't have permission to use this command.",
-        ephemeral: true,
-      });
-      return;
-    }
-
-    const newMinimum = interaction.options.get("minimum")?.value as number;
-    if (!newMinimum || newMinimum <= 0) {
-      await interaction.reply("Please provide a valid positive integer for the new minimum.");
-      return;
-    }
-
-    WHITELIST_MINIMUM = newMinimum;
-    await interaction.reply(`Whitelist minimum updated to ${WHITELIST_MINIMUM} MOOLA.`);
   }
 
   // -------------------------------------------------------
@@ -1607,11 +645,8 @@ client.on("interactionCreate", async (interaction) => {
         .from("users")
         .select("discord_id, points, team")
         .not("discord_id", "in", `(${EXCLUDED_USER_IDS.join(",")})`)
-        .order("points", { ascending: false });
-
-      if (teamOption !== "all") {
-        rankQuery = rankQuery.eq("team", teamOption);
-      }
+        .order("points", { ascending: false })
+        .eq("team", teamOption);
 
       const { data: allUsers } = await rankQuery;
       const userRank = allUsers?.findIndex((user) => user.discord_id === interaction.user.id) ?? -1;
@@ -1622,11 +657,8 @@ client.on("interactionCreate", async (interaction) => {
         .from("users")
         .select("discord_id, points, team", { count: "exact" })
         .not("discord_id", "in", `(${EXCLUDED_USER_IDS.join(",")})`)
-        .order("points", { ascending: false });
-
-      if (teamOption !== "all") {
-        query = query.eq("team", teamOption);
-      }
+        .order("points", { ascending: false })
+        .eq("team", teamOption);
 
       const { data: leaderboardData, count, error } = await query.range(
         skip,
@@ -1644,15 +676,9 @@ client.on("interactionCreate", async (interaction) => {
       const totalPages = Math.ceil((count || 0) / itemsPerPage);
 
       const leaderboardEmbed = new EmbedBuilder()
-        .setColor(
-          teamOption === "bullas"
-            ? "#22C55E"
-            : teamOption === "beras"
-            ? "#EF4444"
-            : "#FFD700"
-        );
+        .setColor(teamOption === "bullas" ? "#22C55E" : "#EF4444");
 
-      // Add user's rank at the top
+      // Add user's rank at the top if found
       if (userRank !== -1 && userData) {
         leaderboardEmbed.addFields({
           name: "Your Rank",
@@ -1708,498 +734,11 @@ client.on("interactionCreate", async (interaction) => {
 });
 
 /********************************************************************
- *      BUTTON HANDLER (CONFIRM or CANCEL ROLE UPDATES)
+ *      BUTTON HANDLER 
  ********************************************************************/
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isButton()) return;
 
-  // CANCEL BUTTONS
-  // e.g., "cancel_wl_update", "cancel_ml_update", "cancel_fm_update"
-  if (
-    interaction.customId === "cancel_wl_update" ||
-    interaction.customId === "cancel_ml_update" ||
-    interaction.customId === "cancel_fm_update"
-  ) {
-    await interaction.update({
-      content: "Role update cancelled.",
-      embeds: [],
-      components: [],
-    });
-    return;
-  }
-
-  
-  // CONFIRM WL
-  if (interaction.customId.startsWith("confirm_wl_")) {
-    if (!hasAdminRole(interaction.member)) {
-      return interaction.reply({
-        content: "You don't have permission to confirm this action.",
-        ephemeral: true,
-      });
-    }
-
-    const [, , team, threshold] = interaction.customId.split("_");
-    
-    // Create initial status message
-    const statusMessage = await interaction.channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0x0099ff)
-          .setTitle("Whitelist Role Update Progress")
-          .setDescription("Starting role updates...")
-      ]
-    });
-
-    // Update original interaction
-    await interaction.update({
-      content: "Role update started. Check progress above ↑",
-      embeds: [],
-      components: [],
-    });
-
-    try {
-      let lastMessageTime = Date.now();
-      let messageToUpdate = statusMessage;
-
-      // Progress update function
-      const updateProgress = async (progress: { processed: number, added: number, existing: number, total: number }) => {
-        try {
-          const now = Date.now();
-          
-          // If last message is too old, create a new one
-          if (now - lastMessageTime > 840000) { // 14 minutes
-            messageToUpdate = await interaction.channel.send({
-              embeds: [
-                new EmbedBuilder()
-                  .setColor(0x0099ff)
-                  .setTitle("Whitelist Role Update Progress (Continued)")
-                  .setDescription("Continuing role updates...")
-              ]
-            });
-            lastMessageTime = now;
-          }
-
-          await messageToUpdate.edit({
-            embeds: [
-              new EmbedBuilder()
-                .setColor(0x0099ff)
-                .setTitle("Whitelist Role Update Progress")
-                .setDescription(
-                  `**Progress:**\n\n` +
-                  `• ${progress.added} roles added\n` +
-                  `• ${progress.existing} users already have the role\n` +
-                  `• ${progress.processed} out of ${progress.total} users processed\n\n` +
-                  `Process will continue in new message if this one gets too old.`
-                )
-            ]
-          });
-        } catch (err) {
-          console.error("Error updating status message:", err);
-          // Try to create a new message if update fails
-          try {
-            messageToUpdate = await interaction.channel.send({
-              embeds: [
-                new EmbedBuilder()
-                  .setColor(0x0099ff)
-                  .setTitle("Whitelist Role Update Progress (Recovered)")
-                  .setDescription(
-                    `**Progress:**\n\n` +
-                    `• ${progress.added} roles added\n` +
-                    `• ${progress.existing} users already have the role\n` +
-                    `• ${progress.processed} out of ${progress.total} users processed\n\n` +
-                    `Continuing updates...`
-                  )
-              ]
-            });
-            lastMessageTime = Date.now();
-          } catch (msgErr) {
-            console.error("Failed to create recovery message:", msgErr);
-          }
-        }
-      };
-
-      // Execute role updates with progress tracking
-      const roleUpdateLog = await updateWhitelistRoles(
-        interaction.guild!,
-        team as "winning" | "losing",
-        Number(threshold),
-        false,
-        updateProgress
-      );
-
-      // Final status message
-      await interaction.channel.send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x0099ff)
-            .setTitle("Whitelist Role Update Complete")
-            .setDescription(
-              `**Final Results:**\n\n` +
-              `• ${roleUpdateLog.added} roles added\n` +
-              `• ${roleUpdateLog.existing} users already had the role\n` +
-              `• ${roleUpdateLog.total} total users processed`
-            )
-        ]
-      });
-    } catch (error) {
-      console.error("Error executing WL role updates:", error);
-      await interaction.channel.send({
-        content: "An error occurred during the role update process. Check the logs for details.",
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0xFF0000)
-            .setTitle("Role Update Error")
-            .setDescription(`Error: ${error.message}`)
-        ]
-      });
-    }
-  }
-
-  // ML Button Handler
-if (interaction.customId.startsWith("confirm_ml_")) {
-  if (!hasAdminRole(interaction.member)) {
-    return interaction.reply({
-      content: "You don't have permission to confirm this action.",
-      ephemeral: true,
-    });
-  }
-
-  const [, , team, threshold] = interaction.customId.split("_");
-  
-  const statusMessage = await interaction.channel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(0x0099ff)
-        .setTitle("Moolalist Role Update Progress")
-        .setDescription("Starting role updates...")
-    ]
-  });
-
-  await interaction.update({
-    content: "Role update started. Check progress above ↑",
-    embeds: [],
-    components: [],
-  });
-
-  try {
-    let lastMessageTime = Date.now();
-    let messageToUpdate = statusMessage;
-
-    const updateProgress = async (progress: { processed: number, added: number, existing: number, total: number }) => {
-      try {
-        const now = Date.now();
-        
-        if (now - lastMessageTime > 840000) {
-          messageToUpdate = await interaction.channel.send({
-            embeds: [
-              new EmbedBuilder()
-                .setColor(0x0099ff)
-                .setTitle("Moolalist Role Update Progress (Continued)")
-                .setDescription("Continuing role updates...")
-            ]
-          });
-          lastMessageTime = now;
-        }
-
-        await messageToUpdate.edit({
-          embeds: [
-            new EmbedBuilder()
-              .setColor(0x0099ff)
-              .setTitle("Moolalist Role Update Progress")
-              .setDescription(
-                `**Progress:**\n\n` +
-                `• ${progress.added} roles added\n` +
-                `• ${progress.existing} users already have the role\n` +
-                `• ${progress.processed} out of ${progress.total} users processed\n\n` +
-                `Process will continue in new message if this one gets too old.`
-              )
-          ]
-        });
-      } catch (err) {
-        console.error("Error updating status message:", err);
-        try {
-          messageToUpdate = await interaction.channel.send({
-            embeds: [
-              new EmbedBuilder()
-                .setColor(0x0099ff)
-                .setTitle("Moolalist Role Update Progress (Recovered)")
-                .setDescription(
-                  `**Progress:**\n\n` +
-                  `• ${progress.added} roles added\n` +
-                  `• ${progress.existing} users already have the role\n` +
-                  `• ${progress.processed} out of ${progress.total} users processed\n\n` +
-                  `Continuing updates...`
-                )
-            ]
-          });
-          lastMessageTime = Date.now();
-        } catch (msgErr) {
-          console.error("Failed to create recovery message:", msgErr);
-        }
-      }
-    };
-
-    const roleUpdateLog = await updateMoolalistRoles(
-      interaction.guild!,
-      team as "winning" | "losing",
-      Number(threshold),
-      false,
-      updateProgress
-    );
-
-    await interaction.channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0x0099ff)
-          .setTitle("Moolalist Role Update Complete")
-          .setDescription(
-            `**Final Results:**\n\n` +
-            `• ${roleUpdateLog.added} roles added\n` +
-            `• ${roleUpdateLog.existing} users already had the role\n` +
-            `• ${roleUpdateLog.total} total users processed`
-          )
-      ]
-    });
-  } catch (error) {
-    console.error("Error executing ML role updates:", error);
-    await interaction.channel.send({
-      content: "An error occurred during the role update process. Check the logs for details.",
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xFF0000)
-          .setTitle("Role Update Error")
-          .setDescription(`Error: ${error.message}`)
-      ]
-    });
-  }
-}
-
-  // FM Button Handler
-if (interaction.customId.startsWith("confirm_fm_")) {
-  if (!hasAdminRole(interaction.member)) {
-    return interaction.reply({
-      content: "You don't have permission to confirm this action.",
-      ephemeral: true,
-    });
-  }
-
-  const [, , team, threshold] = interaction.customId.split("_");
-  
-  const statusMessage = await interaction.channel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(0x0099ff)
-        .setTitle("Free Mint Role Update Progress")
-        .setDescription("Starting role updates...")
-    ]
-  });
-
-  await interaction.update({
-    content: "Role update started. Check progress above ↑",
-    embeds: [],
-    components: [],
-  });
-
-  try {
-    let lastMessageTime = Date.now();
-    let messageToUpdate = statusMessage;
-
-    const updateProgress = async (progress: { processed: number, added: number, existing: number, total: number }) => {
-      try {
-        const now = Date.now();
-        
-        if (now - lastMessageTime > 840000) {
-          messageToUpdate = await interaction.channel.send({
-            embeds: [
-              new EmbedBuilder()
-                .setColor(0x0099ff)
-                .setTitle("Free Mint Role Update Progress (Continued)")
-                .setDescription("Continuing role updates...")
-            ]
-          });
-          lastMessageTime = now;
-        }
-
-        await messageToUpdate.edit({
-          embeds: [
-            new EmbedBuilder()
-              .setColor(0x0099ff)
-              .setTitle("Free Mint Role Update Progress")
-              .setDescription(
-                `**Progress:**\n\n` +
-                `• ${progress.added} roles added\n` +
-                `• ${progress.existing} users already have the role\n` +
-                `• ${progress.processed} out of ${progress.total} users processed\n\n` +
-                `Process will continue in new message if this one gets too old.`
-              )
-          ]
-        });
-      } catch (err) {
-        console.error("Error updating status message:", err);
-        try {
-          messageToUpdate = await interaction.channel.send({
-            embeds: [
-              new EmbedBuilder()
-                .setColor(0x0099ff)
-                .setTitle("Free Mint Role Update Progress (Recovered)")
-                .setDescription(
-                  `**Progress:**\n\n` +
-                  `• ${progress.added} roles added\n` +
-                  `• ${progress.existing} users already have the role\n` +
-                  `• ${progress.processed} out of ${progress.total} users processed\n\n` +
-                  `Continuing updates...`
-                )
-            ]
-          });
-          lastMessageTime = Date.now();
-        } catch (msgErr) {
-          console.error("Failed to create recovery message:", msgErr);
-        }
-      }
-    };
-
-    const roleUpdateLog = await updateFreeMintRoles(
-      interaction.guild!,
-      team as "winning" | "losing",
-      Number(threshold),
-      false,
-      updateProgress
-    );
-
-    await interaction.channel.send({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0x0099ff)
-          .setTitle("Free Mint Role Update Complete")
-          .setDescription(
-            `**Final Results:**\n\n` +
-            `• ${roleUpdateLog.added} roles added\n` +
-            `• ${roleUpdateLog.existing} users already had the role\n` +
-            `• ${roleUpdateLog.total} total users processed`
-          )
-      ]
-    });
-  } catch (error) {
-    console.error("Error executing FM role updates:", error);
-    await interaction.channel.send({
-      content: "An error occurred during the role update process. Check the logs for details.",
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0xFF0000)
-          .setTitle("Role Update Error")
-          .setDescription(`Error: ${error.message}`)
-      ]
-    });
-  }
-}
-//PURGE
-if (interaction.customId === "cancel_purge") {
-  await interaction.update({
-    content: "Purge cancelled.",
-    embeds: [],
-    components: [],
-  });
-  return;
-}
-
-if (interaction.customId === "confirm_purge") {
-  if (!hasAdminRole(interaction.member)) {
-    return interaction.reply({
-      content: "You don't have permission to confirm this action.",
-      ephemeral: true,
-    });
-  }
-
-  const statusMessage = await interaction.channel.send({
-    embeds: [
-      new EmbedBuilder()
-        .setColor(0x0099ff)
-        .setTitle("Zero Balance Purge Progress")
-        .setDescription("Starting purge process...")
-    ]
-  });
-
-  await interaction.update({
-    content: "Purge started. Check progress above ↑",
-    embeds: [],
-    components: [],
-  });
-
-  try {
-    // Get ALL zero balance users
-    const zeroBalanceUsers = await getAllZeroBalanceUsers();
-    if (!zeroBalanceUsers) throw new Error("Failed to fetch zero balance users");
-
-    let removedCount = 0;
-    let processedCount = 0;
-    let errorCount = 0;
-    const totalUsers = zeroBalanceUsers.length;
-    
-    // Process in larger batches
-    const BATCH_SIZE = 50;
-    for (let i = 0; i < zeroBalanceUsers.length; i += BATCH_SIZE) {
-      const batch = zeroBalanceUsers.slice(i, Math.min(i + BATCH_SIZE, zeroBalanceUsers.length));
-      
-      // Process batch
-      for (const user of batch) {
-        try {
-          const member = await interaction.guild?.members.fetch(user.discord_id).catch(() => null);
-          if (member) {
-            if (user.team === "bullas" && member.roles.cache.has(BULL_ROLE_ID)) {
-              await member.roles.remove(BULL_ROLE_ID);
-              removedCount++;
-            } else if (user.team === "beras" && member.roles.cache.has(BEAR_ROLE_ID)) {
-              await member.roles.remove(BEAR_ROLE_ID);
-              removedCount++;
-            }
-          }
-          processedCount++;
-        } catch (err) {
-          console.error(`Error processing user ${user.discord_id}:`, err);
-          errorCount++;
-          processedCount++;
-        }
-      }
-
-      // Update progress every batch
-      await statusMessage.edit({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x0099ff)
-            .setTitle("Zero Balance Purge Progress")
-            .setDescription(
-              `**Progress:**\n\n` +
-              `• ${removedCount} roles removed\n` +
-              `• ${processedCount} of ${totalUsers} users processed (${Math.round((processedCount / totalUsers) * 100)}%)\n` +
-              `• ${errorCount} errors encountered\n\n` +
-              `Please wait while purge continues...`
-            )
-        ]
-      });
-
-      // Small delay between batches
-      await new Promise(resolve => setTimeout(resolve, 500));
-    }
-
-    await statusMessage.edit({
-      embeds: [
-        new EmbedBuilder()
-          .setColor(0x0099ff)
-          .setTitle("Zero Balance Purge Complete")
-          .setDescription(
-            `**Final Results:**\n\n` +
-            `• ${removedCount} roles removed\n` +
-            `• ${totalUsers} users processed\n` +
-            `• ${errorCount} errors encountered`
-          )
-      ]
-    });
-
-  } catch (err) {
-    console.error("Error executing purge:", err);
-    await interaction.channel.send("An error occurred during the purge process.");
-  }
-}
   // Leaderboard pagination
   const [action, teamOption, currentPage] = interaction.customId.split("_");
   if (action !== "prev" && action !== "next") return;
@@ -2225,11 +764,8 @@ if (interaction.customId === "confirm_purge") {
       .from("users")
       .select("discord_id, points, team")
       .not("discord_id", "in", `(${EXCLUDED_USER_IDS.join(",")})`)
-      .order("points", { ascending: false });
-
-    if (teamOption !== "all") {
-      rankQuery = rankQuery.eq("team", teamOption);
-    }
+      .order("points", { ascending: false })
+      .eq("team", teamOption);
 
     const { data: allUsers } = await rankQuery;
     const userRank = allUsers?.findIndex((user) => user.discord_id === interaction.user.id) ?? -1;
@@ -2240,11 +776,8 @@ if (interaction.customId === "confirm_purge") {
       .from("users")
       .select("discord_id, points, team", { count: "exact" })
       .not("discord_id", "in", `(${EXCLUDED_USER_IDS.join(",")})`)
-      .order("points", { ascending: false });
-
-    if (teamOption !== "all") {
-      query = query.eq("team", teamOption);
-    }
+      .order("points", { ascending: false })
+      .eq("team", teamOption);
 
     const { data: leaderboardData, count, error } = await query.range(skip, skip + itemsPerPage - 1);
     if (error) throw error;
@@ -2252,7 +785,7 @@ if (interaction.customId === "confirm_purge") {
     const totalPages = Math.ceil((count || 0) / itemsPerPage);
 
     const leaderboardEmbed = new EmbedBuilder()
-      .setColor(teamOption === "bullas" ? "#22C55E" : teamOption === "beras" ? "#EF4444" : "#FFD700");
+      .setColor(teamOption === "bullas" ? "#22C55E" : "#EF4444");
 
     if (userRank !== -1 && userData) {
       leaderboardEmbed.addFields({
