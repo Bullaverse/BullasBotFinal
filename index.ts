@@ -120,12 +120,13 @@ async function createCSV(data: any[], includeDiscordId: boolean = false, guild: 
   const memberIds = data.map((user) => user.discord_id).filter(Boolean);
   const membersMap = new Map<string, GuildMember>();
 
+  // Process members in batches to avoid rate limits
   for (let i = 0; i < memberIds.length; i += 50) {
     const batch = memberIds.slice(i, i + 50);
     try {
       const members = await guild.members.fetch({ user: batch });
       members.forEach((member) => membersMap.set(member.id, member));
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 1000)); // Rate limit handling
     } catch (error) {
       console.error(`Error fetching batch ${i}-${i + 50}:`, error);
     }
@@ -133,6 +134,7 @@ async function createCSV(data: any[], includeDiscordId: boolean = false, guild: 
 
   const rows = data.map((user) => {
     const member = membersMap.get(user.discord_id);
+    // Default to "N" for users no longer in the server
     const hasWL =
       (member?.roles.cache.has(WHITELIST_ROLE_ID) ||
         member?.roles.cache.has(WL_WINNER_ROLE_ID))
@@ -149,9 +151,10 @@ async function createCSV(data: any[], includeDiscordId: boolean = false, guild: 
         ? "Y"
         : "N";
 
+    // Ensure points is 0 if null/undefined and handle any missing fields
     return includeDiscordId
-      ? `${user.discord_id},${user.address},${user.points},${hasWL},${hasML},${hasFreeMint}`
-      : `${user.address},${user.points},${hasWL},${hasML},${hasFreeMint}`;
+      ? `${user.discord_id || ""},${user.address || ""},${user.points || 0},${hasWL},${hasML},${hasFreeMint}`
+      : `${user.address || ""},${user.points || 0},${hasWL},${hasML},${hasFreeMint}`;
   });
 
   return header + rows.join("\n");
@@ -594,34 +597,33 @@ client.on("interactionCreate", async (interaction) => {
       });
       return;
     }
-
-    // Defer to avoid 3-second timeout
+  
     await interaction.deferReply({ ephemeral: true });
-
+  
     try {
       const guild = interaction.guild;
       if (!guild) {
         await interaction.editReply("Guild not found.");
         return;
       }
-
-      // Get all players sorted by points
+  
+      // Get all players (no filters, include all required fields)
       const { data: allPlayers, error } = await supabase
         .from("users")
-        .select("discord_id, address, points, team")
+        .select("discord_id, address, points")
         .order("points", { ascending: false });
-
+  
       if (error) throw error;
-
+  
       // Create and save the CSV
       const allCSV = await createCSV(allPlayers, true, guild);
       const allFile = await saveCSV(allCSV, `all_players.csv`);
-
+  
       await interaction.editReply({
         content: `Here is the snapshot file with role information:`,
         files: [allFile],
       });
-
+  
       // Clean up the file
       fs.unlinkSync(allFile);
     } catch (error) {
