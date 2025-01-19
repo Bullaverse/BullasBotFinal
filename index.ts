@@ -586,9 +586,6 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
 
-  // -------------------------------------------------------
-  // /snapshot (admin only)
-  // -------------------------------------------------------
   if (interaction.commandName === "snapshot") {
     if (!hasAdminRole(interaction.member)) {
       await interaction.reply({
@@ -597,40 +594,55 @@ client.on("interactionCreate", async (interaction) => {
       });
       return;
     }
-  
+
     await interaction.deferReply({ ephemeral: true });
-  
+
     try {
       const guild = interaction.guild;
       if (!guild) {
         await interaction.editReply("Guild not found.");
         return;
       }
-  
-      // Get all players (no filters, include all required fields)
-      const { data: allPlayers, error } = await supabase
-        .from("users")
-        .select("discord_id, address, points")
-        .order("points", { ascending: false });
-  
-      if (error) throw error;
-  
+
+      // Fetch all users using pagination
+      let allPlayers = [];
+      let page = 0;
+      const pageSize = 1000;
+      let hasMore = true;
+
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from("users")
+          .select("discord_id, address, points")
+          .range(page * pageSize, (page + 1) * pageSize - 1)
+          .order("points", { ascending: false });
+
+        if (error) throw error;
+        
+        if (data && data.length > 0) {
+          allPlayers = [...allPlayers, ...data];
+          page++;
+        } else {
+          hasMore = false;
+        }
+      }
+
       // Create and save the CSV
       const allCSV = await createCSV(allPlayers, true, guild);
       const allFile = await saveCSV(allCSV, `all_players.csv`);
-  
+
       await interaction.editReply({
-        content: `Here is the snapshot file with role information:`,
+        content: `Here is the complete snapshot with ${allPlayers.length} users:`,
         files: [allFile],
       });
-  
+
       // Clean up the file
       fs.unlinkSync(allFile);
     } catch (error) {
       console.error("Error handling snapshot command:", error);
       await interaction.editReply("An error occurred while processing the snapshot command.");
     }
-  }
+}
 
   // -------------------------------------------------------
   // /leaderboard
