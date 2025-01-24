@@ -153,17 +153,44 @@ async function createCSV(data: any[], includeDiscordId: boolean = false, guild: 
   // Create map of verified users (those with wallets)
   const verifiedUsers = new Map(data.map(user => [user.discord_id, user]));
 
-  // Count users who have roles but no wallet
+  // Track users who have roles but no wallet
+  const unverifiedUsers = {
+    wl: [],
+    wlWinner: [],
+    ml: [],
+    mlWinner: [],
+    freeMint: [],
+    freeMintWinner: []
+  };
+
   allMembers.forEach(member => {
     const hasWallet = verifiedUsers.has(member.id);
     
     if (!hasWallet) {
-      if (member.roles.cache.has(WHITELIST_ROLE_ID)) discordStats.usersWithRoleNoWallet.wl++;
-      if (member.roles.cache.has(WL_WINNER_ROLE_ID)) discordStats.usersWithRoleNoWallet.wlWinner++;
-      if (member.roles.cache.has(MOOLALIST_ROLE_ID)) discordStats.usersWithRoleNoWallet.ml++;
-      if (member.roles.cache.has(ML_WINNER_ROLE_ID)) discordStats.usersWithRoleNoWallet.mlWinner++;
-      if (member.roles.cache.has(FREE_MINT_ROLE_ID)) discordStats.usersWithRoleNoWallet.freeMint++;
-      if (member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID)) discordStats.usersWithRoleNoWallet.freeMintWinner++;
+      if (member.roles.cache.has(WHITELIST_ROLE_ID)) {
+        discordStats.usersWithRoleNoWallet.wl++;
+        unverifiedUsers.wl.push(`${member.user.username} (${member.id})`);
+      }
+      if (member.roles.cache.has(WL_WINNER_ROLE_ID)) {
+        discordStats.usersWithRoleNoWallet.wlWinner++;
+        unverifiedUsers.wlWinner.push(`${member.user.username} (${member.id})`);
+      }
+      if (member.roles.cache.has(MOOLALIST_ROLE_ID)) {
+        discordStats.usersWithRoleNoWallet.ml++;
+        unverifiedUsers.ml.push(`${member.user.username} (${member.id})`);
+      }
+      if (member.roles.cache.has(ML_WINNER_ROLE_ID)) {
+        discordStats.usersWithRoleNoWallet.mlWinner++;
+        unverifiedUsers.mlWinner.push(`${member.user.username} (${member.id})`);
+      }
+      if (member.roles.cache.has(FREE_MINT_ROLE_ID)) {
+        discordStats.usersWithRoleNoWallet.freeMint++;
+        unverifiedUsers.freeMint.push(`${member.user.username} (${member.id})`);
+      }
+      if (member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID)) {
+        discordStats.usersWithRoleNoWallet.freeMintWinner++;
+        unverifiedUsers.freeMintWinner.push(`${member.user.username} (${member.id})`);
+      }
     }
   });
 
@@ -210,11 +237,22 @@ async function createCSV(data: any[], includeDiscordId: boolean = false, guild: 
   
   console.log("\n=== Users with Roles but No Wallet ===");
   console.log(`WL Role, No Wallet: ${discordStats.usersWithRoleNoWallet.wl}`);
-  console.log(`WL Winner Role, No Wallet: ${discordStats.usersWithRoleNoWallet.wlWinner}`);
-  console.log(`ML Role, No Wallet: ${discordStats.usersWithRoleNoWallet.ml}`);
-  console.log(`ML Winner Role, No Wallet: ${discordStats.usersWithRoleNoWallet.mlWinner}`);
-  console.log(`Free Mint Role, No Wallet: ${discordStats.usersWithRoleNoWallet.freeMint}`);
-  console.log(`Free Mint Winner Role, No Wallet: ${discordStats.usersWithRoleNoWallet.freeMintWinner}`);
+  console.log("Users with WL Role but no wallet:", unverifiedUsers.wl);
+  
+  console.log(`\nWL Winner Role, No Wallet: ${discordStats.usersWithRoleNoWallet.wlWinner}`);
+  console.log("Users with WL Winner Role but no wallet:", unverifiedUsers.wlWinner);
+  
+  console.log(`\nML Role, No Wallet: ${discordStats.usersWithRoleNoWallet.ml}`);
+  console.log("Users with ML Role but no wallet:", unverifiedUsers.ml);
+  
+  console.log(`\nML Winner Role, No Wallet: ${discordStats.usersWithRoleNoWallet.mlWinner}`);
+  console.log("Users with ML Winner Role but no wallet:", unverifiedUsers.mlWinner);
+  
+  console.log(`\nFree Mint Role, No Wallet: ${discordStats.usersWithRoleNoWallet.freeMint}`);
+  console.log("Users with Free Mint Role but no wallet:", unverifiedUsers.freeMint);
+  
+  console.log(`\nFree Mint Winner Role, No Wallet: ${discordStats.usersWithRoleNoWallet.freeMintWinner}`);
+  console.log("Users with Free Mint Winner Role but no wallet:", unverifiedUsers.freeMintWinner);
 
   return header + rows.join("\n");
 }
