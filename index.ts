@@ -28,7 +28,6 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { v4 } from "uuid";
 import { Database } from "./types/supabase";
-import _ from 'lodash';
 
 /********************************************************************
  *                       SUPABASE SETUP
@@ -114,22 +113,11 @@ export const maskAddress = (address: string) => {
  *                     CSV CREATION & SAVING
  ********************************************************************/
 async function createCSV(data: any[], includeDiscordId: boolean = false, guild: Guild) {
-  // Create separate headers for different role types
   const header = includeDiscordId
-    ? "discord_id,address,points,wl_role,wl_winner_role,ml_role,ml_winner_role,free_mint_role,free_mint_winner_role\n"
-    : "address,points,wl_role,wl_winner_role,ml_role,ml_winner_role,free_mint_role,free_mint_winner_role\n";
+    ? "discord_id,address,points,wl_role,ml_role,free_mint_role\n"
+    : "address,points,wl_role,ml_role,free_mint_role\n";
 
-  // Deduplicate data based on discord_id and address
-  const uniqueData = _.uniqBy(data, (item) => {
-    return `${item.discord_id}-${item.address}`;
-  });
-
-  console.log(`Original entries: ${data.length}, After deduplication: ${uniqueData.length}`);
-
-  const memberIds = uniqueData
-    .map((user) => user.discord_id)
-    .filter(Boolean);
-
+  const memberIds = data.map((user) => user.discord_id).filter(Boolean);
   const membersMap = new Map<string, GuildMember>();
 
   // Process members in batches to avoid rate limits
@@ -144,68 +132,45 @@ async function createCSV(data: any[], includeDiscordId: boolean = false, guild: 
     }
   }
 
-  // Track role statistics
-  const stats = {
-    totalWL: 0,
-    totalML: 0,
-    totalFreeMint: 0,
-    duplicateRoles: 0,
-  };
-
-  const rows = uniqueData.map((user) => {
+  const rows = data.map((user) => {
     const member = membersMap.get(user.discord_id);
-    
-    // Check individual roles separately
-    const hasWLRole = member?.roles.cache.has(WHITELIST_ROLE_ID) ? "Y" : "N";
-    const hasWLWinnerRole = member?.roles.cache.has(WL_WINNER_ROLE_ID) ? "Y" : "N";
-    const hasMLRole = member?.roles.cache.has(MOOLALIST_ROLE_ID) ? "Y" : "N";
-    const hasMLWinnerRole = member?.roles.cache.has(ML_WINNER_ROLE_ID) ? "Y" : "N";
-    const hasFreeMintRole = member?.roles.cache.has(FREE_MINT_ROLE_ID) ? "Y" : "N";
-    const hasFreeMintWinnerRole = member?.roles.cache.has(FREE_MINT_WINNER_ROLE_ID) ? "Y" : "N";
+    // Default to "N" for users no longer in the server
+    const hasWL =
+      (member?.roles.cache.has(WHITELIST_ROLE_ID) ||
+        member?.roles.cache.has(WL_WINNER_ROLE_ID))
+        ? "Y"
+        : "N";
+    const hasML =
+      (member?.roles.cache.has(MOOLALIST_ROLE_ID) ||
+        member?.roles.cache.has(ML_WINNER_ROLE_ID))
+        ? "Y"
+        : "N";
+    const hasFreeMint =
+      (member?.roles.cache.has(FREE_MINT_ROLE_ID) ||
+        member?.roles.cache.has(FREE_MINT_WINNER_ROLE_ID))
+        ? "Y"
+        : "N";
 
-    // Update statistics
-    if (hasWLRole === "Y" || hasWLWinnerRole === "Y") stats.totalWL++;
-    if (hasMLRole === "Y" || hasMLWinnerRole === "Y") stats.totalML++;
-    if (hasFreeMintRole === "Y" || hasFreeMintWinnerRole === "Y") stats.totalFreeMint++;
-    
-    // Check for duplicate roles
-    if ((hasWLRole === "Y" && hasWLWinnerRole === "Y") ||
-        (hasMLRole === "Y" && hasMLWinnerRole === "Y") ||
-        (hasFreeMintRole === "Y" && hasFreeMintWinnerRole === "Y")) {
-      stats.duplicateRoles++;
-    }
-
-    // Format the row
-    const rowData = includeDiscordId
-      ? `${user.discord_id || ""},${user.address || ""},${user.points || 0},${hasWLRole},${hasWLWinnerRole},${hasMLRole},${hasMLWinnerRole},${hasFreeMintRole},${hasFreeMintWinnerRole}`
-      : `${user.address || ""},${user.points || 0},${hasWLRole},${hasWLWinnerRole},${hasMLRole},${hasMLWinnerRole},${hasFreeMintRole},${hasFreeMintWinnerRole}`;
-
-    return rowData;
+    // Ensure points is 0 if null/undefined and handle any missing fields
+    return includeDiscordId
+      ? `${user.discord_id || ""},${user.address || ""},${user.points || 0},${hasWL},${hasML},${hasFreeMint}`
+      : `${user.address || ""},${user.points || 0},${hasWL},${hasML},${hasFreeMint}`;
   });
-
-  // Log statistics
-  console.log("\nSnapshot Statistics:");
-  console.log(`Total WL (including winners): ${stats.totalWL}`);
-  console.log(`Total ML (including winners): ${stats.totalML}`);
-  console.log(`Total Free Mint (including winners): ${stats.totalFreeMint}`);
-  console.log(`Users with duplicate roles: ${stats.duplicateRoles}`);
 
   return header + rows.join("\n");
 }
+
 async function saveCSV(content: string, filename: string) {
   const __filename = fileURLToPath(import.meta.url);
   const __dirname = dirname(__filename);
   const tempDir = join(__dirname, "temp");
 
-  // Create temp directory if it doesn't exist
   if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir);
   }
 
-  // Create file path and save the file
   const filePath = join(tempDir, filename);
   fs.writeFileSync(filePath, content);
-  
   return filePath;
 }
 
@@ -620,9 +585,7 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
   }
-// -------------------------------------------------------
-  // /snapshot
-  // -------------------------------------------------------
+
   if (interaction.commandName === "snapshot") {
     if (!hasAdminRole(interaction.member)) {
       await interaction.reply({
@@ -641,37 +604,16 @@ client.on("interactionCreate", async (interaction) => {
         return;
       }
 
-      // Create progress message
-      const progressMessage = await interaction.channel!.send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x0099ff)
-            .setTitle("Snapshot Progress")
-            .setDescription("Starting snapshot process...")
-        ]
-      });
-
-      // Fetch all verified users (with non-null address)
+      // Fetch all users using pagination
       let allPlayers = [];
       let page = 0;
       const pageSize = 1000;
       let hasMore = true;
 
       while (hasMore) {
-        // Update progress message
-        await progressMessage.edit({
-          embeds: [
-            new EmbedBuilder()
-              .setColor(0x0099ff)
-              .setTitle("Snapshot Progress")
-              .setDescription(`Fetching data... Retrieved ${allPlayers.length} users so far.`)
-          ]
-        });
-
         const { data, error } = await supabase
           .from("users")
           .select("discord_id, address, points")
-          .not("address", "is", null)  // Only include verified users
           .range(page * pageSize, (page + 1) * pageSize - 1)
           .order("points", { ascending: false });
 
@@ -683,77 +625,24 @@ client.on("interactionCreate", async (interaction) => {
         } else {
           hasMore = false;
         }
-
-        // Add a small delay to avoid rate limits
-        await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
-      // Update progress message
-      await progressMessage.edit({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x0099ff)
-            .setTitle("Snapshot Progress")
-            .setDescription(`Creating CSV file with ${allPlayers.length} users...`)
-        ]
-      });
-
-      // Create and save the CSV with additional role information
+      // Create and save the CSV
       const allCSV = await createCSV(allPlayers, true, guild);
-      const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const allFile = await saveCSV(allCSV, `snapshot_${timestamp}.csv`);
+      const allFile = await saveCSV(allCSV, `all_players.csv`);
 
-      // Get the statistics from the console output
-      const stats = {
-        totalUsers: allPlayers.length,
-        originalEntries: allPlayers.length,
-        afterDeduplication: new Set(allPlayers.map(p => `${p.discord_id}-${p.address}`)).size
-      };
-
-      // Final update to progress message
-      await progressMessage.edit({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x00FF00)
-            .setTitle("Snapshot Complete")
-            .setDescription(
-              `📊 **Snapshot Statistics**\n\n` +
-              `• Total Verified Users: ${stats.totalUsers}\n` +
-              `• Original Entries: ${stats.originalEntries}\n` +
-              `• After Deduplication: ${stats.afterDeduplication}\n\n` +
-              `CSV file is ready for download below.`
-            )
-        ]
-      });
-
-      // Send the file
       await interaction.editReply({
-        content: `Snapshot complete! Check the statistics in the message above.`,
+        content: `Here is the complete snapshot with ${allPlayers.length} users:`,
         files: [allFile],
       });
 
       // Clean up the file
       fs.unlinkSync(allFile);
-
     } catch (error) {
       console.error("Error handling snapshot command:", error);
       await interaction.editReply("An error occurred while processing the snapshot command.");
-      
-      // Update progress message if it exists
-      try {
-        await interaction.channel!.send({
-          embeds: [
-            new EmbedBuilder()
-              .setColor(0xFF0000)
-              .setTitle("Snapshot Error")
-              .setDescription(`An error occurred while creating the snapshot.\nError: ${error}`)
-          ]
-        });
-      } catch (e) {
-        console.error("Error sending error message:", e);
-      }
     }
-  }
+}
 
   // -------------------------------------------------------
   // /leaderboard
