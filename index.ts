@@ -114,51 +114,77 @@ export const maskAddress = (address: string) => {
  *                     CSV CREATION & SAVING
  ********************************************************************/
 async function createCSV(data: any[], includeDiscordId: boolean = false, guild: Guild) {
-  // Create separate headers for different role types
   const header = includeDiscordId
     ? "discord_id,address,points,wl_role,wl_winner_role,ml_role,ml_winner_role,free_mint_role,free_mint_winner_role\n"
     : "address,points,wl_role,wl_winner_role,ml_role,ml_winner_role,free_mint_role,free_mint_winner_role\n";
 
-  // Deduplicate data using Map (keeping latest entry for each discord_id-address combo)
-  const uniqueMap = new Map();
-  data.forEach((item) => {
-    const key = `${item.discord_id}-${item.address}`;
-    uniqueMap.set(key, item);
+  // Get all Discord members with roles first
+  const discordStats = {
+    totalWL: 0,
+    totalWLWinner: 0,
+    totalML: 0,
+    totalMLWinner: 0,
+    totalFreeMint: 0,
+    totalFreeMintWinner: 0,
+    usersWithRoleNoWallet: {
+      wl: 0,
+      wlWinner: 0,
+      ml: 0,
+      mlWinner: 0,
+      freeMint: 0,
+      freeMintWinner: 0
+    }
+  };
+
+  // Fetch all members (doing in batches to avoid rate limits)
+  console.log("Fetching Discord members...");
+  const allMembers = await guild.members.fetch();
+  
+  // Count total roles in Discord
+  allMembers.forEach(member => {
+    if (member.roles.cache.has(WHITELIST_ROLE_ID)) discordStats.totalWL++;
+    if (member.roles.cache.has(WL_WINNER_ROLE_ID)) discordStats.totalWLWinner++;
+    if (member.roles.cache.has(MOOLALIST_ROLE_ID)) discordStats.totalML++;
+    if (member.roles.cache.has(ML_WINNER_ROLE_ID)) discordStats.totalMLWinner++;
+    if (member.roles.cache.has(FREE_MINT_ROLE_ID)) discordStats.totalFreeMint++;
+    if (member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID)) discordStats.totalFreeMintWinner++;
   });
-  const uniqueData = Array.from(uniqueMap.values());
 
-  console.log(`Original entries: ${data.length}, After deduplication: ${uniqueData.length}`);
+  // Create map of verified users (those with wallets)
+  const verifiedUsers = new Map(data.map(user => [user.discord_id, user]));
 
-  const memberIds = uniqueData
-    .map((user) => user.discord_id)
-    .filter(Boolean);
+  // Count users who have roles but no wallet
+  allMembers.forEach(member => {
+    const hasWallet = verifiedUsers.has(member.id);
+    
+    if (!hasWallet) {
+      if (member.roles.cache.has(WHITELIST_ROLE_ID)) discordStats.usersWithRoleNoWallet.wl++;
+      if (member.roles.cache.has(WL_WINNER_ROLE_ID)) discordStats.usersWithRoleNoWallet.wlWinner++;
+      if (member.roles.cache.has(MOOLALIST_ROLE_ID)) discordStats.usersWithRoleNoWallet.ml++;
+      if (member.roles.cache.has(ML_WINNER_ROLE_ID)) discordStats.usersWithRoleNoWallet.mlWinner++;
+      if (member.roles.cache.has(FREE_MINT_ROLE_ID)) discordStats.usersWithRoleNoWallet.freeMint++;
+      if (member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID)) discordStats.usersWithRoleNoWallet.freeMintWinner++;
+    }
+  });
 
+  // Generate the CSV content as before
+  const memberIds = data.map((user) => user.discord_id).filter(Boolean);
   const membersMap = new Map<string, GuildMember>();
 
-  // Process members in batches to avoid rate limits
   for (let i = 0; i < memberIds.length; i += 50) {
     const batch = memberIds.slice(i, i + 50);
     try {
       const members = await guild.members.fetch({ user: batch });
       members.forEach((member) => membersMap.set(member.id, member));
-      await new Promise((resolve) => setTimeout(resolve, 1000)); // Rate limit handling
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     } catch (error) {
       console.error(`Error fetching batch ${i}-${i + 50}:`, error);
     }
   }
 
-  // Track role statistics
-  const stats = {
-    totalWL: 0,
-    totalML: 0,
-    totalFreeMint: 0,
-    duplicateRoles: 0,
-  };
-
-  const rows = uniqueData.map((user) => {
+  const rows = data.map((user) => {
     const member = membersMap.get(user.discord_id);
     
-    // Check individual roles separately
     const hasWLRole = member?.roles.cache.has(WHITELIST_ROLE_ID) ? "Y" : "N";
     const hasWLWinnerRole = member?.roles.cache.has(WL_WINNER_ROLE_ID) ? "Y" : "N";
     const hasMLRole = member?.roles.cache.has(MOOLALIST_ROLE_ID) ? "Y" : "N";
@@ -166,19 +192,6 @@ async function createCSV(data: any[], includeDiscordId: boolean = false, guild: 
     const hasFreeMintRole = member?.roles.cache.has(FREE_MINT_ROLE_ID) ? "Y" : "N";
     const hasFreeMintWinnerRole = member?.roles.cache.has(FREE_MINT_WINNER_ROLE_ID) ? "Y" : "N";
 
-    // Update statistics
-    if (hasWLRole === "Y" || hasWLWinnerRole === "Y") stats.totalWL++;
-    if (hasMLRole === "Y" || hasMLWinnerRole === "Y") stats.totalML++;
-    if (hasFreeMintRole === "Y" || hasFreeMintWinnerRole === "Y") stats.totalFreeMint++;
-    
-    // Check for duplicate roles
-    if ((hasWLRole === "Y" && hasWLWinnerRole === "Y") ||
-        (hasMLRole === "Y" && hasMLWinnerRole === "Y") ||
-        (hasFreeMintRole === "Y" && hasFreeMintWinnerRole === "Y")) {
-      stats.duplicateRoles++;
-    }
-
-    // Format the row
     const rowData = includeDiscordId
       ? `${user.discord_id || ""},${user.address || ""},${user.points || 0},${hasWLRole},${hasWLWinnerRole},${hasMLRole},${hasMLWinnerRole},${hasFreeMintRole},${hasFreeMintWinnerRole}`
       : `${user.address || ""},${user.points || 0},${hasWLRole},${hasWLWinnerRole},${hasMLRole},${hasMLWinnerRole},${hasFreeMintRole},${hasFreeMintWinnerRole}`;
@@ -186,12 +199,22 @@ async function createCSV(data: any[], includeDiscordId: boolean = false, guild: 
     return rowData;
   });
 
-  // Log statistics
-  console.log("\nSnapshot Statistics:");
-  console.log(`Total WL (including winners): ${stats.totalWL}`);
-  console.log(`Total ML (including winners): ${stats.totalML}`);
-  console.log(`Total Free Mint (including winners): ${stats.totalFreeMint}`);
-  console.log(`Users with duplicate roles: ${stats.duplicateRoles}`);
+  // Log detailed statistics
+  console.log("\n=== Discord Role Statistics ===");
+  console.log(`WL Roles in Discord: ${discordStats.totalWL}`);
+  console.log(`WL Winner Roles in Discord: ${discordStats.totalWLWinner}`);
+  console.log(`ML Roles in Discord: ${discordStats.totalML}`);
+  console.log(`ML Winner Roles in Discord: ${discordStats.totalMLWinner}`);
+  console.log(`Free Mint Roles in Discord: ${discordStats.totalFreeMint}`);
+  console.log(`Free Mint Winner Roles in Discord: ${discordStats.totalFreeMintWinner}`);
+  
+  console.log("\n=== Users with Roles but No Wallet ===");
+  console.log(`WL Role, No Wallet: ${discordStats.usersWithRoleNoWallet.wl}`);
+  console.log(`WL Winner Role, No Wallet: ${discordStats.usersWithRoleNoWallet.wlWinner}`);
+  console.log(`ML Role, No Wallet: ${discordStats.usersWithRoleNoWallet.ml}`);
+  console.log(`ML Winner Role, No Wallet: ${discordStats.usersWithRoleNoWallet.mlWinner}`);
+  console.log(`Free Mint Role, No Wallet: ${discordStats.usersWithRoleNoWallet.freeMint}`);
+  console.log(`Free Mint Winner Role, No Wallet: ${discordStats.usersWithRoleNoWallet.freeMintWinner}`);
 
   return header + rows.join("\n");
 }
