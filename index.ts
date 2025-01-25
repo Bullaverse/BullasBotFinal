@@ -919,22 +919,6 @@ if (interaction.commandName === "snapshot") {
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const allFile = await saveCSV(csvContent, `snapshot_${timestamp}.csv`);
 
-      // Log role statistics
-      console.log("\n=== Role Statistics ===");
-      console.log(`Whitelist - Total: ${stats.discordStats.totalWL}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.wl}`);
-      console.log(`WL Winner - Total: ${stats.discordStats.totalWLWinner}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.wlWinner}`);
-      console.log(`Moolalist - Total: ${stats.discordStats.totalML}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.ml}`);
-      console.log(`ML Winner - Total: ${stats.discordStats.totalMLWinner}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.mlWinner}`);
-      console.log(`Free Mint - Total: ${stats.discordStats.totalFreeMint}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.freeMint}`);
-      console.log(`Free Mint Winner - Total: ${stats.discordStats.totalFreeMintWinner}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.freeMintWinner}`);
-
-      console.log("\n=== Unverified Users ===");
-      console.log("WL Role:", stats.unverifiedUsers.wl);
-      console.log("WL Winner Role:", stats.unverifiedUsers.wlWinner);
-      console.log("ML Role:", stats.unverifiedUsers.ml);
-      console.log("ML Winner Role:", stats.unverifiedUsers.mlWinner);
-      console.log("Free Mint Role:", stats.unverifiedUsers.freeMint);
-      console.log("Free Mint Winner Role:", stats.unverifiedUsers.freeMintWinner);
 
       // Send file + final success message
       await progressMessage.edit({
