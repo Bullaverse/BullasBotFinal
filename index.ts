@@ -110,7 +110,7 @@ export const maskAddress = (address: string) => {
   return `${address.slice(0, 6)}...${address.slice(-4)}`;
 };
 /********************************************************************
- *                     CREATE CSV + "Reverse" Check
+ *                     CREATE CSV WITH REVERSE CHECK
  ********************************************************************/
 async function createCSV(
   data: any[],
@@ -128,27 +128,29 @@ async function createCSV(
     if (!existing) {
       dedupMap.set(row.discord_id, row);
     } else {
+      // if new row has address while existing doesn't
       if (row.address && !existing.address) {
         dedupMap.set(row.discord_id, row);
-      } else if (row.address && existing.address) {
+      }
+      // if both have address, keep the one with higher points
+      else if (row.address && existing.address) {
         if ((row.points ?? 0) > (existing.points ?? 0)) {
           dedupMap.set(row.discord_id, row);
         }
       }
-      // else keep existing
     }
   }
   const uniqueData = Array.from(dedupMap.values());
 
   // ---------------------------------------------------
-  // 1) CSV header
+  // 1) CSV header (no points column)
   // ---------------------------------------------------
   const header = includeDiscordId
     ? "discord_id,address,wl_role,wl_winner_role,ml_role,ml_winner_role,free_mint_role,free_mint_winner_role\n"
     : "address,wl_role,wl_winner_role,ml_role,ml_winner_role,free_mint_role,free_mint_winner_role\n";
 
   // ---------------------------------------------------
-  // 2) Fetch all guild members
+  // 2) Fetch all Discord members
   // ---------------------------------------------------
   const allMembers = await guild.members.fetch();
 
@@ -170,12 +172,14 @@ async function createCSV(
     }
   };
 
+  // We'll collect final CSV lines in "rows."
+  // Also track "processedIds" for verified.
+  // And store an array of "noWalletLines" to do final pass.
   const rows: string[] = [];
   const processedIds = new Set<string>();
 
-  // We'll record each user we label as NO_WALLET, so we can re-check them
   interface NoWalletLine {
-    index: number;
+    index: number;   // Which line in "rows" we inserted
     discordId: string;
   }
   const noWalletLines: NoWalletLine[] = [];
@@ -189,7 +193,7 @@ async function createCSV(
     const member = await guild.members.fetch(user.discord_id).catch(() => null);
     if (!member) continue; // not in guild
 
-    // check roles
+    // Check roles from the guild
     const hasWL = member.roles.cache.has(WHITELIST_ROLE_ID);
     const hasWLWinner = member.roles.cache.has(WL_WINNER_ROLE_ID);
     const hasML = member.roles.cache.has(MOOLALIST_ROLE_ID);
@@ -197,16 +201,16 @@ async function createCSV(
     const hasFreeMint = member.roles.cache.has(FREE_MINT_ROLE_ID);
     const hasFreeMintWinner = member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID);
 
+    // If user lacks all relevant roles, skip
     if (
       !hasWL && !hasWLWinner &&
       !hasML && !hasMLWinner &&
       !hasFreeMint && !hasFreeMintWinner
     ) {
-      // no relevant roles
       continue;
     }
 
-    // stats
+    // Update stats
     if (hasWL) discordStats.totalWL++;
     if (hasWLWinner) discordStats.totalWLWinner++;
     if (hasML) discordStats.totalML++;
@@ -216,7 +220,7 @@ async function createCSV(
 
     processedIds.add(user.discord_id);
 
-    // build CSV line
+    // Build CSV line
     if (includeDiscordId) {
       rows.push(
         [
@@ -246,9 +250,9 @@ async function createCSV(
   }
 
   // ---------------------------------------------------
-  // 4) PASS B: NO_WALLET for guild roles not processed
+  // 4) PASS B: NO_WALLET for guild members with roles but not processed
   // ---------------------------------------------------
-  allMembers.forEach(member => {
+  allMembers.forEach((member) => {
     if (processedIds.has(member.id)) return;
 
     const hasWL = member.roles.cache.has(WHITELIST_ROLE_ID);
@@ -266,6 +270,7 @@ async function createCSV(
       return; // no relevant roles
     }
 
+    // They have roles but are not processed => NO_WALLET
     if (hasWL) discordStats.usersWithRoleNoWallet.wl++;
     if (hasWLWinner) discordStats.usersWithRoleNoWallet.wlWinner++;
     if (hasML) discordStats.usersWithRoleNoWallet.ml++;
@@ -274,6 +279,7 @@ async function createCSV(
     if (hasFreeMintWinner) discordStats.usersWithRoleNoWallet.freeMintWinner++;
 
     const lineIndex = rows.length;
+
     if (includeDiscordId) {
       rows.push(
         [
@@ -301,6 +307,7 @@ async function createCSV(
       );
     }
 
+    // Record for final pass
     noWalletLines.push({ index: lineIndex, discordId: member.id });
   });
 
@@ -310,7 +317,7 @@ async function createCSV(
   for (const item of noWalletLines) {
     const userId = item.discordId;
 
-    // Check if DB has an address
+    // 5a) Check if the DB has a valid address for them
     const { data: row, error } = await supabase
       .from("users")
       .select("address")
@@ -324,10 +331,14 @@ async function createCSV(
     }
 
     if (row && row.address) {
-      // They do have an address => let's fetch roles again
+      // They do have an address => let's see if they're still in the guild
       const member = await guild.members.fetch(userId).catch(() => null);
-      if (!member) continue; // can't fetch them => keep NO_WALLET
+      if (!member) {
+        // can't fetch => keep NO_WALLET
+        continue;
+      }
 
+      // re-check roles
       const hasWL = member.roles.cache.has(WHITELIST_ROLE_ID);
       const hasWLWinner = member.roles.cache.has(WL_WINNER_ROLE_ID);
       const hasML = member.roles.cache.has(MOOLALIST_ROLE_ID);
@@ -335,7 +346,17 @@ async function createCSV(
       const hasFreeMint = member.roles.cache.has(FREE_MINT_ROLE_ID);
       const hasFreeMintWinner = member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID);
 
-      // Rebuild line with "verified"
+      // If they truly have no roles, keep them as NO_WALLET,
+      // but presumably we know they have roles from pass B
+      if (
+        !hasWL && !hasWLWinner &&
+        !hasML && !hasMLWinner &&
+        !hasFreeMint && !hasFreeMintWinner
+      ) {
+        continue;
+      }
+
+      // Overwrite that line with "verified"
       if (includeDiscordId) {
         rows[item.index] = [
           userId,
@@ -362,7 +383,7 @@ async function createCSV(
   }
 
   // ---------------------------------------------------
-  // Done
+  // Done: build CSV
   // ---------------------------------------------------
   const csvContent = header + rows.join("\n");
   return {
@@ -373,6 +394,7 @@ async function createCSV(
     }
   };
 }
+
 
 
 
