@@ -737,10 +737,7 @@ client.on("interactionCreate", async (interaction) => {
     }
   }
 // -------------------------------------------------------
-  // /snapshot
-  // -------------------------------------------------------
-  // -------------------------------------------------------
-// /snapshot
+// /snapshot (Admin only)
 // -------------------------------------------------------
 if (interaction.commandName === "snapshot") {
   if (!hasAdminRole(interaction.member)) {
@@ -763,39 +760,63 @@ if (interaction.commandName === "snapshot") {
     // Create progress message
     const progressMessage = await interaction.channel!.send("Starting snapshot process...");
 
-    // Fetch all verified users (with non-null address)
-    let allPlayers = [];
-    let page = 0;
+    //
+    // 1) Fetch ALL verified users without stopping early
+    //
+    let allPlayers: any[] = [];
     const pageSize = 1000;
-    let hasMore = true;
+    let page = 0;
 
-    while (hasMore) {
-      try {
-        const { data, error } = await supabase
+    try {
+      // First call: fetch initial chunk AND get total count
+      const { data, count, error } = await supabase
+        .from("users")
+        .select("discord_id, address, points", { count: "exact" })
+        .not("address", "is", null)
+        .order("points", { ascending: false })
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+
+      if (error) throw error;
+      if (!data) {
+        await progressMessage.edit("No data returned from Supabase.");
+        return;
+      }
+
+      // Add the first chunk
+      allPlayers.push(...data);
+
+      // total number of matching rows in the DB
+      const totalRows = count || 0;
+
+      // 2) Keep fetching until we've retrieved 'count' rows
+      while ((page + 1) * pageSize < totalRows) {
+        page++;
+        const { data: chunk, error: chunkErr } = await supabase
           .from("users")
           .select("discord_id, address, points")
           .not("address", "is", null)
-          .range(page * pageSize, (page + 1) * pageSize - 1)
-          .order("points", { ascending: false });
+          .order("points", { ascending: false })
+          .range(page * pageSize, (page + 1) * pageSize - 1);
 
-        if (error) throw error;
-        
-        if (data && data.length > 0) {
-          allPlayers = [...allPlayers, ...data];
-          page++;
-        } else {
-          hasMore = false;
+        if (chunkErr) throw chunkErr;
+
+        if (chunk && chunk.length > 0) {
+          allPlayers.push(...chunk);
         }
 
+        // Update progress message
         await progressMessage.edit(`Fetching data... Retrieved ${allPlayers.length} users so far.`);
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch (error) {
-        console.error("Error fetching users:", error);
-        await progressMessage.edit("Error fetching users. Please try again.");
-        return;
+        await new Promise(resolve => setTimeout(resolve, 1000)); // small delay to avoid rate-limits
       }
+    } catch (fetchError) {
+      console.error("Error fetching users:", fetchError);
+      await progressMessage.edit("Error fetching users. Please try again.");
+      return;
     }
 
+    //
+    // 3) Now that we have allPlayers, generate CSV
+    //
     await progressMessage.edit(`Creating CSV file with ${allPlayers.length} users...`);
 
     try {
@@ -803,7 +824,7 @@ if (interaction.commandName === "snapshot") {
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const allFile = await saveCSV(csvContent, `snapshot_${timestamp}.csv`);
 
-      // Log statistics to console
+      // Log role statistics
       console.log("\n=== Role Statistics ===");
       console.log(`Whitelist - Total: ${stats.discordStats.totalWL}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.wl}`);
       console.log(`WL Winner - Total: ${stats.discordStats.totalWLWinner}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.wlWinner}`);
@@ -820,7 +841,7 @@ if (interaction.commandName === "snapshot") {
       console.log("Free Mint Role:", stats.unverifiedUsers.freeMint);
       console.log("Free Mint Winner Role:", stats.unverifiedUsers.freeMintWinner);
 
-      // Send simple message with file
+      // Send file + final success message
       await progressMessage.edit({
         content: `✅ Snapshot complete! Total users processed: ${stats.totalProcessed}`,
         files: [allFile]
@@ -830,7 +851,7 @@ if (interaction.commandName === "snapshot") {
         content: "✅ Snapshot complete! Check the console."
       });
 
-      // Clean up the file
+      // Clean up the local file
       fs.unlinkSync(allFile);
     } catch (error) {
       console.error("Error processing snapshot:", error);
@@ -842,6 +863,7 @@ if (interaction.commandName === "snapshot") {
     await interaction.editReply("An error occurred while processing the snapshot command.");
   }
 }
+
 
   // -------------------------------------------------------
   // /leaderboard
