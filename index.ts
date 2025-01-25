@@ -208,71 +208,66 @@ async function createCSV(data: any[], includeDiscordId: boolean = false, guild: 
     // Skip users we've already processed
     if (processedDiscordIds.has(member.id)) return;
 
+    let hasAnyRole = false;
+
     // Check each role
     if (member.roles.cache.has(WHITELIST_ROLE_ID)) {
       discordStats.usersWithRoleNoWallet.wl++;
       unverifiedUsers.wl.push(`${member.user.tag} (${member.id})`);
+      hasAnyRole = true;
     }
     if (member.roles.cache.has(WL_WINNER_ROLE_ID)) {
       discordStats.usersWithRoleNoWallet.wlWinner++;
       unverifiedUsers.wlWinner.push(`${member.user.tag} (${member.id})`);
+      hasAnyRole = true;
     }
     if (member.roles.cache.has(MOOLALIST_ROLE_ID)) {
       discordStats.usersWithRoleNoWallet.ml++;
       unverifiedUsers.ml.push(`${member.user.tag} (${member.id})`);
+      hasAnyRole = true;
     }
     if (member.roles.cache.has(ML_WINNER_ROLE_ID)) {
       discordStats.usersWithRoleNoWallet.mlWinner++;
       unverifiedUsers.mlWinner.push(`${member.user.tag} (${member.id})`);
+      hasAnyRole = true;
     }
     if (member.roles.cache.has(FREE_MINT_ROLE_ID)) {
       discordStats.usersWithRoleNoWallet.freeMint++;
       unverifiedUsers.freeMint.push(`${member.user.tag} (${member.id})`);
+      hasAnyRole = true;
     }
     if (member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID)) {
       discordStats.usersWithRoleNoWallet.freeMintWinner++;
       unverifiedUsers.freeMintWinner.push(`${member.user.tag} (${member.id})`);
+      hasAnyRole = true;
+    }
+
+    // If user has any role, add them to the CSV with NO_WALLET
+    if (hasAnyRole) {
+      const hasWLRole = member.roles.cache.has(WHITELIST_ROLE_ID) ? "Y" : "N";
+      const hasWLWinnerRole = member.roles.cache.has(WL_WINNER_ROLE_ID) ? "Y" : "N";
+      const hasMLRole = member.roles.cache.has(MOOLALIST_ROLE_ID) ? "Y" : "N";
+      const hasMLWinnerRole = member.roles.cache.has(ML_WINNER_ROLE_ID) ? "Y" : "N";
+      const hasFreeMintRole = member.roles.cache.has(FREE_MINT_ROLE_ID) ? "Y" : "N";
+      const hasFreeMintWinnerRole = member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID) ? "Y" : "N";
+
+      const rowData = includeDiscordId
+        ? `${member.id},NO_WALLET,0,${hasWLRole},${hasWLWinnerRole},${hasMLRole},${hasMLWinnerRole},${hasFreeMintRole},${hasFreeMintWinnerRole}`
+        : `NO_WALLET,0,${hasWLRole},${hasWLWinnerRole},${hasMLRole},${hasMLWinnerRole},${hasFreeMintRole},${hasFreeMintWinnerRole}`;
+
+      rows.push(rowData);
     }
   });
 
-  // ---------------------------------------------------
-  // 5) Log Statistics
-  // ---------------------------------------------------
-  console.log("\n=== Discord Role Statistics ===");
-  console.log(`WL Roles in Discord: ${discordStats.totalWL}`);
-  console.log(`WL Winner Roles in Discord: ${discordStats.totalWLWinner}`);
-  console.log(`ML Roles in Discord: ${discordStats.totalML}`);
-  console.log(`ML Winner Roles in Discord: ${discordStats.totalMLWinner}`);
-  console.log(`Free Mint Roles in Discord: ${discordStats.totalFreeMint}`);
-  console.log(`Free Mint Winner Roles in Discord: ${discordStats.totalFreeMintWinner}`);
-
-  console.log("\n=== Users with Roles but No Wallet ===");
-  console.log(`WL Role, No Wallet (${unverifiedUsers.wl.length}):`, unverifiedUsers.wl);
-  console.log(`\nWL Winner Role, No Wallet (${unverifiedUsers.wlWinner.length}):`, unverifiedUsers.wlWinner);
-  console.log(`\nML Role, No Wallet (${unverifiedUsers.ml.length}):`, unverifiedUsers.ml);
-  console.log(`\nML Winner Role, No Wallet (${unverifiedUsers.mlWinner.length}):`, unverifiedUsers.mlWinner);
-  console.log(`\nFree Mint Role, No Wallet (${unverifiedUsers.freeMint.length}):`, unverifiedUsers.freeMint);
-  console.log(`\nFree Mint Winner Role, No Wallet (${unverifiedUsers.freeMintWinner.length}):`, unverifiedUsers.freeMintWinner);
-
-  // Return final CSV
-  return header + rows.join("\n");
-}
-
-async function saveCSV(content: string, filename: string) {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = dirname(__filename);
-  const tempDir = join(__dirname, "temp");
-
-  // Create temp directory if it doesn't exist
-  if (!fs.existsSync(tempDir)) {
-    fs.mkdirSync(tempDir);
-  }
-
-  // Create file path and save the file
-  const filePath = join(tempDir, filename);
-  fs.writeFileSync(filePath, content);
-  
-  return filePath;
+  // Return both the CSV content and statistics
+  return {
+    csvContent: header + rows.join("\n"),
+    stats: {
+      discordStats,
+      unverifiedUsers,
+      totalProcessed: processedDiscordIds.size
+    }
+  };
 }
 
 /********************************************************************
@@ -737,7 +732,7 @@ client.on("interactionCreate", async (interaction) => {
         const { data, error } = await supabase
           .from("users")
           .select("discord_id, address, points")
-          .not("address", "is", null)  // Only include verified users
+          .not("address", "is", null)
           .range(page * pageSize, (page + 1) * pageSize - 1)
           .order("points", { ascending: false });
 
@@ -750,7 +745,6 @@ client.on("interactionCreate", async (interaction) => {
           hasMore = false;
         }
 
-        // Add a small delay to avoid rate limits
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
 
@@ -765,37 +759,69 @@ client.on("interactionCreate", async (interaction) => {
       });
 
       // Create and save the CSV with additional role information
-      const allCSV = await createCSV(allPlayers, true, guild);
+      const { csvContent, stats } = await createCSV(allPlayers, true, guild);
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-      const allFile = await saveCSV(allCSV, `snapshot_${timestamp}.csv`);
+      const allFile = await saveCSV(csvContent, `snapshot_${timestamp}.csv`);
 
-      // Get the statistics from the console output
-      const stats = {
-        totalUsers: allPlayers.length,
-        originalEntries: allPlayers.length,
-        afterDeduplication: new Set(allPlayers.map(p => `${p.discord_id}-${p.address}`)).size
+      // Create role statistics embed
+      const roleStatsEmbed = new EmbedBuilder()
+        .setColor(0x00FF00)
+        .setTitle("Role Statistics")
+        .addFields(
+          { name: "Whitelist", value: `Total: ${stats.discordStats.totalWL}\nUnverified: ${stats.discordStats.usersWithRoleNoWallet.wl}`, inline: true },
+          { name: "WL Winner", value: `Total: ${stats.discordStats.totalWLWinner}\nUnverified: ${stats.discordStats.usersWithRoleNoWallet.wlWinner}`, inline: true },
+          { name: '\u200B', value: '\u200B', inline: true },
+          { name: "Moolalist", value: `Total: ${stats.discordStats.totalML}\nUnverified: ${stats.discordStats.usersWithRoleNoWallet.ml}`, inline: true },
+          { name: "ML Winner", value: `Total: ${stats.discordStats.totalMLWinner}\nUnverified: ${stats.discordStats.usersWithRoleNoWallet.mlWinner}`, inline: true },
+          { name: '\u200B', value: '\u200B', inline: true },
+          { name: "Free Mint", value: `Total: ${stats.discordStats.totalFreeMint}\nUnverified: ${stats.discordStats.usersWithRoleNoWallet.freeMint}`, inline: true },
+          { name: "Free Mint Winner", value: `Total: ${stats.discordStats.totalFreeMintWinner}\nUnverified: ${stats.discordStats.usersWithRoleNoWallet.freeMintWinner}`, inline: true }
+        );
+
+      // Create unverified users embeds (split into multiple if needed)
+      const unverifiedEmbeds = [];
+      let currentEmbed = new EmbedBuilder()
+        .setColor(0xFFA500)
+        .setTitle("Unverified Users with Roles");
+
+      let currentLength = 0;
+      const maxLength = 1024; // Discord's field value limit
+
+      // Helper function to add fields to embed
+      const addFieldToEmbed = (name: string, users: string[]) => {
+        if (users.length === 0) return;
+        
+        const userList = users.join('\n');
+        if (currentLength + userList.length > maxLength) {
+          unverifiedEmbeds.push(currentEmbed);
+          currentEmbed = new EmbedBuilder()
+            .setColor(0xFFA500)
+            .setTitle("Unverified Users with Roles (Continued)");
+          currentLength = 0;
+        }
+        
+        currentEmbed.addFields({ name, value: userList || "None", inline: false });
+        currentLength += userList.length;
       };
 
-      // Final update to progress message
+      // Add fields for each role type
+      addFieldToEmbed("Whitelist Role", stats.unverifiedUsers.wl);
+      addFieldToEmbed("WL Winner Role", stats.unverifiedUsers.wlWinner);
+      addFieldToEmbed("Moolalist Role", stats.unverifiedUsers.ml);
+      addFieldToEmbed("ML Winner Role", stats.unverifiedUsers.mlWinner);
+      addFieldToEmbed("Free Mint Role", stats.unverifiedUsers.freeMint);
+      addFieldToEmbed("Free Mint Winner Role", stats.unverifiedUsers.freeMintWinner);
+
+      unverifiedEmbeds.push(currentEmbed);
+
+      // Send all embeds and file
       await progressMessage.edit({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x00FF00)
-            .setTitle("Snapshot Complete")
-            .setDescription(
-              `📊 **Snapshot Statistics**\n\n` +
-              `• Total Verified Users: ${stats.totalUsers}\n` +
-              `• Original Entries: ${stats.originalEntries}\n` +
-              `• After Deduplication: ${stats.afterDeduplication}\n\n` +
-              `CSV file is ready for download below.`
-            )
-        ]
+        embeds: [roleStatsEmbed, ...unverifiedEmbeds],
+        files: [allFile]
       });
 
-      // Send the file
       await interaction.editReply({
-        content: `Snapshot complete! Check the statistics in the message above.`,
-        files: [allFile],
+        content: "Snapshot complete! Check the statistics above."
       });
 
       // Clean up the file
@@ -805,7 +831,6 @@ client.on("interactionCreate", async (interaction) => {
       console.error("Error handling snapshot command:", error);
       await interaction.editReply("An error occurred while processing the snapshot command.");
       
-      // Update progress message if it exists
       try {
         await interaction.channel!.send({
           embeds: [
@@ -819,7 +844,7 @@ client.on("interactionCreate", async (interaction) => {
         console.error("Error sending error message:", e);
       }
     }
-  }
+}
 
   // -------------------------------------------------------
   // /leaderboard
