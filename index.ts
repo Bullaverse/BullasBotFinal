@@ -285,26 +285,6 @@ async function saveCSV(content: string, filename: string) {
   
   return filePath;
 }
-// Helper function to chunk user lists
-function chunkUserList(users: string[], maxLength: number = 1024): string[] {
-  const chunks: string[] = [];
-  let currentChunk = "";
-
-  users.forEach(user => {
-    if ((currentChunk + "\n" + user).length > maxLength) {
-      chunks.push(currentChunk);
-      currentChunk = user;
-    } else {
-      currentChunk += (currentChunk ? "\n" : "") + user;
-    }
-  });
-
-  if (currentChunk) {
-    chunks.push(currentChunk);
-  }
-
-  return chunks;
-}
 /********************************************************************
  *            EXCLUDE THESE USERS FROM LEADERBOARD
  ********************************************************************/
@@ -719,51 +699,38 @@ client.on("interactionCreate", async (interaction) => {
 // -------------------------------------------------------
   // /snapshot
   // -------------------------------------------------------
-  if (interaction.commandName === "snapshot") {
-    if (!hasAdminRole(interaction.member)) {
-      await interaction.reply({
-        content: "You don't have permission to use this command.",
-        ephemeral: true,
-      });
+  // -------------------------------------------------------
+// /snapshot
+// -------------------------------------------------------
+if (interaction.commandName === "snapshot") {
+  if (!hasAdminRole(interaction.member)) {
+    await interaction.reply({
+      content: "You don't have permission to use this command.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.deferReply({ ephemeral: true });
+
+  try {
+    const guild = interaction.guild;
+    if (!guild) {
+      await interaction.editReply("Guild not found.");
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    // Create progress message
+    const progressMessage = await interaction.channel!.send("Starting snapshot process...");
 
-    try {
-      const guild = interaction.guild;
-      if (!guild) {
-        await interaction.editReply("Guild not found.");
-        return;
-      }
+    // Fetch all verified users (with non-null address)
+    let allPlayers = [];
+    let page = 0;
+    const pageSize = 1000;
+    let hasMore = true;
 
-      // Create progress message
-      const progressMessage = await interaction.channel!.send({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x0099ff)
-            .setTitle("Snapshot Progress")
-            .setDescription("Starting snapshot process...")
-        ]
-      });
-
-      // Fetch all verified users (with non-null address)
-      let allPlayers = [];
-      let page = 0;
-      const pageSize = 1000;
-      let hasMore = true;
-
-      while (hasMore) {
-        // Update progress message
-        await progressMessage.edit({
-          embeds: [
-            new EmbedBuilder()
-              .setColor(0x0099ff)
-              .setTitle("Snapshot Progress")
-              .setDescription(`Fetching data... Retrieved ${allPlayers.length} users so far.`)
-          ]
-        });
-
+    while (hasMore) {
+      try {
         const { data, error } = await supabase
           .from("users")
           .select("discord_id, address, points")
@@ -780,99 +747,60 @@ client.on("interactionCreate", async (interaction) => {
           hasMore = false;
         }
 
+        await progressMessage.edit(`Fetching data... Retrieved ${allPlayers.length} users so far.`);
         await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.error("Error fetching users:", error);
+        await progressMessage.edit("Error fetching users. Please try again.");
+        return;
       }
+    }
 
-      // Update progress message
-      await progressMessage.edit({
-        embeds: [
-          new EmbedBuilder()
-            .setColor(0x0099ff)
-            .setTitle("Snapshot Progress")
-            .setDescription(`Creating CSV file with ${allPlayers.length} users...`)
-        ]
-      });
+    await progressMessage.edit(`Creating CSV file with ${allPlayers.length} users...`);
 
-      // Create and save the CSV with additional role information
+    try {
       const { csvContent, stats } = await createCSV(allPlayers, true, guild);
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
       const allFile = await saveCSV(csvContent, `snapshot_${timestamp}.csv`);
 
-      // Create role statistics embed
-      const roleStatsEmbed = new EmbedBuilder()
-        .setColor(0x00FF00)
-        .setTitle("Role Statistics")
-        .addFields(
-          { name: "Whitelist", value: `Total: ${stats.discordStats.totalWL}\nUnverified: ${stats.discordStats.usersWithRoleNoWallet.wl}`, inline: true },
-          { name: "WL Winner", value: `Total: ${stats.discordStats.totalWLWinner}\nUnverified: ${stats.discordStats.usersWithRoleNoWallet.wlWinner}`, inline: true },
-          { name: '\u200B', value: '\u200B', inline: true },
-          { name: "Moolalist", value: `Total: ${stats.discordStats.totalML}\nUnverified: ${stats.discordStats.usersWithRoleNoWallet.ml}`, inline: true },
-          { name: "ML Winner", value: `Total: ${stats.discordStats.totalMLWinner}\nUnverified: ${stats.discordStats.usersWithRoleNoWallet.mlWinner}`, inline: true },
-          { name: '\u200B', value: '\u200B', inline: true },
-          { name: "Free Mint", value: `Total: ${stats.discordStats.totalFreeMint}\nUnverified: ${stats.discordStats.usersWithRoleNoWallet.freeMint}`, inline: true },
-          { name: "Free Mint Winner", value: `Total: ${stats.discordStats.totalFreeMintWinner}\nUnverified: ${stats.discordStats.usersWithRoleNoWallet.freeMintWinner}`, inline: true }
-        );
+      // Log statistics to console
+      console.log("\n=== Role Statistics ===");
+      console.log(`Whitelist - Total: ${stats.discordStats.totalWL}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.wl}`);
+      console.log(`WL Winner - Total: ${stats.discordStats.totalWLWinner}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.wlWinner}`);
+      console.log(`Moolalist - Total: ${stats.discordStats.totalML}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.ml}`);
+      console.log(`ML Winner - Total: ${stats.discordStats.totalMLWinner}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.mlWinner}`);
+      console.log(`Free Mint - Total: ${stats.discordStats.totalFreeMint}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.freeMint}`);
+      console.log(`Free Mint Winner - Total: ${stats.discordStats.totalFreeMintWinner}, Unverified: ${stats.discordStats.usersWithRoleNoWallet.freeMintWinner}`);
 
-      // Create unverified users embeds (split into multiple if needed)
-      const unverifiedEmbeds = [];
-      let currentEmbed = new EmbedBuilder()
-        .setColor(0xFFA500)
-        .setTitle("Unverified Users with Roles");
+      console.log("\n=== Unverified Users ===");
+      console.log("WL Role:", stats.unverifiedUsers.wl);
+      console.log("WL Winner Role:", stats.unverifiedUsers.wlWinner);
+      console.log("ML Role:", stats.unverifiedUsers.ml);
+      console.log("ML Winner Role:", stats.unverifiedUsers.mlWinner);
+      console.log("Free Mint Role:", stats.unverifiedUsers.freeMint);
+      console.log("Free Mint Winner Role:", stats.unverifiedUsers.freeMintWinner);
 
-      let currentLength = 0;
-      const maxLength = 1024; // Discord's field value limit
-
-      // Helper function to add fields to embed
-      const addFieldToEmbed = (name: string, users: string[]) => {
-        if (users.length === 0) return;
-        
-        const chunks = chunkUserList(users);
-        chunks.forEach((chunk, index) => {
-          const fieldName = chunks.length > 1 ? `${name} (Part ${index + 1}/${chunks.length})` : name;
-          currentEmbed.addFields({ name: fieldName, value: chunk, inline: false });
-        });
-      };
-
-      // Add fields for each role type
-      addFieldToEmbed("Whitelist Role", stats.unverifiedUsers.wl);
-      addFieldToEmbed("WL Winner Role", stats.unverifiedUsers.wlWinner);
-      addFieldToEmbed("Moolalist Role", stats.unverifiedUsers.ml);
-      addFieldToEmbed("ML Winner Role", stats.unverifiedUsers.mlWinner);
-      addFieldToEmbed("Free Mint Role", stats.unverifiedUsers.freeMint);
-      addFieldToEmbed("Free Mint Winner Role", stats.unverifiedUsers.freeMintWinner);
-
-      unverifiedEmbeds.push(currentEmbed);
-
-      // Send all embeds and file
+      // Send simple message with file
       await progressMessage.edit({
-        embeds: [roleStatsEmbed, ...unverifiedEmbeds],
+        content: `✅ Snapshot complete! Total users processed: ${stats.totalProcessed}`,
         files: [allFile]
       });
 
       await interaction.editReply({
-        content: "Snapshot complete! Check the statistics above."
+        content: "✅ Snapshot complete! Check the console."
       });
 
       // Clean up the file
       fs.unlinkSync(allFile);
-
     } catch (error) {
-      console.error("Error handling snapshot command:", error);
-      await interaction.editReply("An error occurred while processing the snapshot command.");
-      
-      try {
-        await interaction.channel!.send({
-          embeds: [
-            new EmbedBuilder()
-              .setColor(0xFF0000)
-              .setTitle("Snapshot Error")
-              .setDescription(`An error occurred while creating the snapshot.\nError: ${error}`)
-          ]
-        });
-      } catch (e) {
-        console.error("Error sending error message:", e);
-      }
+      console.error("Error processing snapshot:", error);
+      await progressMessage.edit("Error processing snapshot. Please try again.");
+      throw error;
     }
+  } catch (error) {
+    console.error("Error handling snapshot command:", error);
+    await interaction.editReply("An error occurred while processing the snapshot command.");
+  }
 }
 
   // -------------------------------------------------------
