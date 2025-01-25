@@ -285,7 +285,26 @@ async function saveCSV(content: string, filename: string) {
   
   return filePath;
 }
+// Helper function to chunk user lists
+function chunkUserList(users: string[], maxLength: number = 1024): string[] {
+  const chunks: string[] = [];
+  let currentChunk = "";
 
+  users.forEach(user => {
+    if ((currentChunk + "\n" + user).length > maxLength) {
+      chunks.push(currentChunk);
+      currentChunk = user;
+    } else {
+      currentChunk += (currentChunk ? "\n" : "") + user;
+    }
+  });
+
+  if (currentChunk) {
+    chunks.push(currentChunk);
+  }
+
+  return chunks;
+}
 /********************************************************************
  *            EXCLUDE THESE USERS FROM LEADERBOARD
  ********************************************************************/
@@ -807,17 +826,11 @@ client.on("interactionCreate", async (interaction) => {
       const addFieldToEmbed = (name: string, users: string[]) => {
         if (users.length === 0) return;
         
-        const userList = users.join('\n');
-        if (currentLength + userList.length > maxLength) {
-          unverifiedEmbeds.push(currentEmbed);
-          currentEmbed = new EmbedBuilder()
-            .setColor(0xFFA500)
-            .setTitle("Unverified Users with Roles (Continued)");
-          currentLength = 0;
-        }
-        
-        currentEmbed.addFields({ name, value: userList || "None", inline: false });
-        currentLength += userList.length;
+        const chunks = chunkUserList(users);
+        chunks.forEach((chunk, index) => {
+          const fieldName = chunks.length > 1 ? `${name} (Part ${index + 1}/${chunks.length})` : name;
+          currentEmbed.addFields({ name: fieldName, value: chunk, inline: false });
+        });
       };
 
       // Add fields for each role type
