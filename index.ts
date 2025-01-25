@@ -113,52 +113,51 @@ export const maskAddress = (address: string) => {
 /********************************************************************
  *                     CSV CREATION & SAVING
  ********************************************************************/
-async function createCSV(data: any[], includeDiscordId = false, guild: Guild) {
+async function createCSV(data: any[], includeDiscordId: boolean = false, guild: Guild) {
   // ---------------------------------------------------
-  // 0) Improve deduplication logic
-  //    So that if any row has a valid address, we keep it.
+  // 0) Deduplicate by discord_id (keeping an address)
   // ---------------------------------------------------
   const dedupMap = new Map<string, any>();
 
   for (const row of data) {
-    // If we've never seen this user before, set the row immediately.
+    // If we haven't seen this user yet, set them.
     if (!dedupMap.has(row.discord_id)) {
       dedupMap.set(row.discord_id, row);
-    } else {
-      // We already have a row for this user; decide which row is "better."
-      const existing = dedupMap.get(row.discord_id);
+      continue;
+    }
 
-      // Example logic:
-      // 1) If the new row has an address and existing doesn't, override.
-      if (row.address && !existing.address) {
+    // We already have a row for this user.
+    const existing = dedupMap.get(row.discord_id);
+
+    // If the NEW row has an address and the existing doesn't, overwrite.
+    if (row.address && !existing.address) {
+      dedupMap.set(row.discord_id, row);
+    }
+    // If BOTH have addresses, keep whichever has higher points.
+    else if (row.address && existing.address) {
+      if ((row.points ?? 0) > (existing.points ?? 0)) {
         dedupMap.set(row.discord_id, row);
       }
-      // 2) If both have addresses, maybe keep the one with higher points.
-      else if (row.address && existing.address) {
-        if ((row.points || 0) > (existing.points || 0)) {
-          dedupMap.set(row.discord_id, row);
-        }
-      }
-      // 3) Otherwise, do nothing (keep existing).
     }
+    // Otherwise, do nothing (keep the existing entry).
   }
 
-  // Now convert Map back to array
+  // Convert the map back to an array.
   const uniqueData = Array.from(dedupMap.values());
 
   // ---------------------------------------------------
-  // 1) Build CSV header
+  // 1) Prepare CSV header
   // ---------------------------------------------------
   const header = includeDiscordId
     ? "discord_id,address,points,wl_role,wl_winner_role,ml_role,ml_winner_role,free_mint_role,free_mint_winner_role\n"
     : "address,points,wl_role,wl_winner_role,ml_role,ml_winner_role,free_mint_role,free_mint_winner_role\n";
 
   // ---------------------------------------------------
-  // 2) Fetch Discord members
+  // 2) Fetch all Discord members (for role checks)
   // ---------------------------------------------------
-  console.log("Fetching Discord members...");
   const allMembers = await guild.members.fetch();
 
+  // Tracking stats
   const discordStats = {
     totalWL: 0,
     totalWLWinner: 0,
@@ -172,23 +171,27 @@ async function createCSV(data: any[], includeDiscordId = false, guild: Guild) {
       ml: 0,
       mlWinner: 0,
       freeMint: 0,
-      freeMintWinner: 0,
-    },
+      freeMintWinner: 0
+    }
   };
 
   // ---------------------------------------------------
-  // 3) Process verified users (those with a wallet)
+  // 3) Process verified users (those with address)
   // ---------------------------------------------------
-  const processedDiscordIds = new Set();
+  const processedDiscordIds = new Set<string>();
   const rows: string[] = [];
 
   for (const user of uniqueData) {
-    // Skip if no Discord ID or no address
-    if (!user.discord_id || !user.address) continue;
+    if (!user.discord_id || !user.address) {
+      // Skip if no Discord ID or no wallet address
+      continue;
+    }
 
+    // Fetch the guild member
     const member = await guild.members.fetch(user.discord_id).catch(() => null);
     if (!member) continue;
 
+    // Mark them as processed so we don't list them as NO_WALLET
     processedDiscordIds.add(user.discord_id);
 
     // Check roles
@@ -199,7 +202,7 @@ async function createCSV(data: any[], includeDiscordId = false, guild: Guild) {
     const hasFreeMintRole = member.roles.cache.has(FREE_MINT_ROLE_ID) ? "Y" : "N";
     const hasFreeMintWinnerRole = member.roles.cache.has(FREE_MINT_WINNER_ROLE_ID) ? "Y" : "N";
 
-    // Skip users with no roles at all
+    // If user doesn't have ANY relevant roles, skip them in CSV
     if (
       hasWLRole === "N" &&
       hasWLWinnerRole === "N" &&
@@ -211,7 +214,7 @@ async function createCSV(data: any[], includeDiscordId = false, guild: Guild) {
       continue;
     }
 
-    // Update statistics
+    // Update basic role stats
     if (hasWLRole === "Y") discordStats.totalWL++;
     if (hasWLWinnerRole === "Y") discordStats.totalWLWinner++;
     if (hasMLRole === "Y") discordStats.totalML++;
@@ -219,16 +222,15 @@ async function createCSV(data: any[], includeDiscordId = false, guild: Guild) {
     if (hasFreeMintRole === "Y") discordStats.totalFreeMint++;
     if (hasFreeMintWinnerRole === "Y") discordStats.totalFreeMintWinner++;
 
-    // Build row
+    // Create CSV row
     const rowData = includeDiscordId
       ? `${user.discord_id},${user.address},${user.points || 0},${hasWLRole},${hasWLWinnerRole},${hasMLRole},${hasMLWinnerRole},${hasFreeMintRole},${hasFreeMintWinnerRole}`
       : `${user.address},${user.points || 0},${hasWLRole},${hasWLWinnerRole},${hasMLRole},${hasMLWinnerRole},${hasFreeMintRole},${hasFreeMintWinnerRole}`;
-
     rows.push(rowData);
   }
 
   // ---------------------------------------------------
-  // 4) Process users who have roles but no wallet
+  // 4) Find users who have roles but truly NO wallet
   // ---------------------------------------------------
   const unverifiedUsers = {
     wl: [] as string[],
@@ -236,15 +238,16 @@ async function createCSV(data: any[], includeDiscordId = false, guild: Guild) {
     ml: [] as string[],
     mlWinner: [] as string[],
     freeMint: [] as string[],
-    freeMintWinner: [] as string[],
+    freeMintWinner: [] as string[]
   };
 
   allMembers.forEach((member) => {
-    // Skip if user was processed above
+    // Skip if we already processed them
     if (processedDiscordIds.has(member.id)) return;
 
     let hasAnyRole = false;
 
+    // Check each role
     if (member.roles.cache.has(WHITELIST_ROLE_ID)) {
       discordStats.usersWithRoleNoWallet.wl++;
       unverifiedUsers.wl.push(`${member.user.tag} (${member.id})`);
@@ -276,7 +279,7 @@ async function createCSV(data: any[], includeDiscordId = false, guild: Guild) {
       hasAnyRole = true;
     }
 
-    // If user has roles but was not processed (no wallet)
+    // If they have any roles but we never found an address, mark NO_WALLET
     if (hasAnyRole) {
       const hasWLRole = member.roles.cache.has(WHITELIST_ROLE_ID) ? "Y" : "N";
       const hasWLWinnerRole = member.roles.cache.has(WL_WINNER_ROLE_ID) ? "Y" : "N";
@@ -294,15 +297,15 @@ async function createCSV(data: any[], includeDiscordId = false, guild: Guild) {
   });
 
   // ---------------------------------------------------
-  // 5) Return CSV content and stats
+  // 5) Return the CSV and stats
   // ---------------------------------------------------
   return {
     csvContent: header + rows.join("\n"),
     stats: {
       discordStats,
       unverifiedUsers,
-      totalProcessed: processedDiscordIds.size,
-    },
+      totalProcessed: processedDiscordIds.size
+    }
   };
 }
 
