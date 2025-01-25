@@ -269,6 +269,22 @@ async function createCSV(data: any[], includeDiscordId: boolean = false, guild: 
     }
   };
 }
+async function saveCSV(content: string, filename: string) {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const tempDir = join(__dirname, "temp");
+
+  // Create temp directory if it doesn't exist
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir);
+  }
+
+  // Create file path and save the file
+  const filePath = join(tempDir, filename);
+  fs.writeFileSync(filePath, content);
+  
+  return filePath;
+}
 
 /********************************************************************
  *            EXCLUDE THESE USERS FROM LEADERBOARD
