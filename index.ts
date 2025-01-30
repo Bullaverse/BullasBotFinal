@@ -435,27 +435,27 @@ const EXCLUDED_USER_IDS = [
  */
 
 const commands = [
-  // ====== 2) /alreadywanked ======
+  // ====== 1) /alreadywanked ======
   new SlashCommandBuilder()
     .setName("alreadywanked")
     .setDescription("Assign new role to all verified users (Admin only)"),
 
-  // ====== 5) /updatewallet ======
+  // ====== 2) /updatewallet ======
   new SlashCommandBuilder()
     .setName("updatewallet")
     .setDescription("Update your wallet address"),
 
-  // ====== 8) /snapshot (Admin only) ======
+  // ====== 3) /snapshot (Admin only) ======
   new SlashCommandBuilder()
     .setName("snapshot")
     .setDescription("Take a snapshot of the current standings"),
 
-  // ====== /wankme ======
+  // ====== 4) /wankme ======
   new SlashCommandBuilder()
     .setName("wankme")
     .setDescription("Get started with Moola Wars and earn your roles"),
 
-  // ====== 11) /leaderboard ======
+  // ====== 5) /leaderboard ======
   new SlashCommandBuilder()
     .setName("leaderboard")
     .setDescription("View the leaderboard")
@@ -474,7 +474,17 @@ const commands = [
         .setName("page")
         .setDescription("Page number")
         .setMinValue(1)
-    )
+    ),
+    // ====== 6) /pepewl======
+    new SlashCommandBuilder()
+  .setName("pepewl")
+  .setDescription("Give WL Winner role to Pepefrens holders (Admin only)")
+  .addBooleanOption(option =>
+    option
+      .setName('simulate')
+      .setDescription('Run in simulation mode (no roles will be assigned)')
+      .setRequired(false)
+  )
 ];
 
 /********************************************************************
@@ -826,9 +836,6 @@ client.on("interactionCreate", async (interaction) => {
       });
     }
   }
-// -------------------------------------------------------
-// /snapshot (Admin only)
-// -------------------------------------------------------
 /********************************************************************
  *                     SNAPSHOT COMMAND
  ********************************************************************/
@@ -942,7 +949,177 @@ if (interaction.commandName === "snapshot") {
     await interaction.editReply("An error occurred while processing the snapshot command.");
   }
 }
+// -------------------------------------------------------
+// /pepewl (Admin only)
+// -------------------------------------------------------
+if (interaction.commandName === "pepewl") {
+  // Check for admin permission
+  if (!hasAdminRole(interaction.member)) {
+    await interaction.reply({
+      content: "You don't have permission to use this command.",
+      ephemeral: true,
+    });
+    return;
+  }
 
+  // If simulate option is not provided, default to true for safety
+  const isSimulation = interaction.options.getBoolean('simulate') ?? true;
+  await interaction.deferReply();
+
+  try {
+    const guild = interaction.guild;
+    if (!guild) {
+      await interaction.editReply("Guild not found.");
+      return;
+    }
+
+    // Get the roles
+    const pepefrensRole = guild.roles.cache.get('1263891694076559430');
+    const wlWinnerRole = guild.roles.cache.get(WL_WINNER_ROLE_ID);
+
+    if (!pepefrensRole || !wlWinnerRole) {
+      await interaction.editReply("Required roles not found.");
+      return;
+    }
+
+    // Fetch all members with Pepefrens role
+    const pepefrensMembers = (await guild.members.fetch()).filter(
+      member => member.roles.cache.has(pepefrensRole.id)
+    );
+
+    // Analyze what changes would be made
+    const stats = {
+      totalPepefrens: pepefrensMembers.size,
+      alreadyHaveWL: 0,
+      willReceiveWL: 0,
+      errors: 0
+    };
+
+    // Create initial status message
+    const statusEmbed = new EmbedBuilder()
+      .setColor(0x0099ff)
+      .setTitle(`${isSimulation ? '[SIMULATION] ' : ''}Pepefrens WL Assignment`)
+      .setDescription('Processing members...');
+
+    let statusMessage = await interaction.channel!.send({ embeds: [statusEmbed] });
+
+    // Process members and collect stats
+    for (const [memberId, member] of pepefrensMembers) {
+      if (member.roles.cache.has(wlWinnerRole.id)) {
+        stats.alreadyHaveWL++;
+      } else {
+        stats.willReceiveWL++;
+      }
+
+      // Update status every 100 members
+      if ((stats.alreadyHaveWL + stats.willReceiveWL) % 100 === 0) {
+        await statusMessage.edit({
+          embeds: [new EmbedBuilder()
+            .setColor(0x0099ff)
+            .setTitle(`${isSimulation ? '[SIMULATION] ' : ''}Pepefrens WL Assignment`)
+            .setDescription(
+              `Processing members...\n\n` +
+              `• Total Pepefrens holders: ${stats.totalPepefrens}\n` +
+              `• Already have WL: ${stats.alreadyHaveWL}\n` +
+              `• Will receive WL: ${stats.willReceiveWL}\n` +
+              `• Errors: ${stats.errors}`
+            )]
+        });
+      }
+    }
+
+    // If this is just a simulation, show final stats and return
+    if (isSimulation) {
+      await statusMessage.edit({
+        embeds: [new EmbedBuilder()
+          .setColor(0x0099ff)
+          .setTitle('[SIMULATION] Pepefrens WL Assignment Results')
+          .setDescription(
+            `**This was a simulation. No roles were modified.**\n\n` +
+            `• Total Pepefrens holders: ${stats.totalPepefrens}\n` +
+            `• Already have WL: ${stats.alreadyHaveWL}\n` +
+            `• Would receive WL: ${stats.willReceiveWL}\n` +
+            `• Potential errors: ${stats.errors}`
+          )]
+      });
+
+      // Add confirmation buttons
+      const row = new ActionRowBuilder<ButtonBuilder>()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId('confirm_pepewl')
+            .setLabel('Proceed with Role Assignment')
+            .setStyle(ButtonStyle.Success),
+          new ButtonBuilder()
+            .setCustomId('cancel_pepewl')
+            .setLabel('Cancel')
+            .setStyle(ButtonStyle.Danger)
+        );
+
+      await interaction.editReply({
+        content: 'Review the simulation results above and choose to proceed or cancel.',
+        components: [row]
+      });
+
+      return;
+    }
+
+    // If not simulation, proceed with actual role assignment
+    stats.willReceiveWL = 0; // Reset counter for actual assignment
+    stats.errors = 0;
+
+    for (const [memberId, member] of pepefrensMembers) {
+      if (!member.roles.cache.has(wlWinnerRole.id)) {
+        try {
+          if (!isSimulation) {
+            await member.roles.add(wlWinnerRole);
+          }
+          stats.willReceiveWL++;
+        } catch (error) {
+          console.error(`Error assigning role to ${memberId}:`, error);
+          stats.errors++;
+        }
+      }
+
+      // Update status every 50 actual assignments
+      if (stats.willReceiveWL % 50 === 0) {
+        await statusMessage.edit({
+          embeds: [new EmbedBuilder()
+            .setColor(0x0099ff)
+            .setTitle('Pepefrens WL Assignment Progress')
+            .setDescription(
+              `Assigning roles...\n\n` +
+              `• Roles assigned: ${stats.willReceiveWL}\n` +
+              `• Errors: ${stats.errors}\n\n` +
+              `Please wait while roles are being assigned...`
+            )]
+        });
+      }
+
+      // Add a small delay to avoid rate limits
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
+    // Final status update
+    await statusMessage.edit({
+      embeds: [new EmbedBuilder()
+        .setColor(0x0099ff)
+        .setTitle('Pepefrens WL Assignment Complete')
+        .setDescription(
+          `• Total Pepefrens holders: ${stats.totalPepefrens}\n` +
+          `• Already had WL: ${stats.alreadyHaveWL}\n` +
+          `• Received WL: ${stats.willReceiveWL}\n` +
+          `• Errors: ${stats.errors}`
+        )]
+    });
+
+    await interaction.editReply('✅ Role assignment completed! Check status message above.');
+
+  } catch (error) {
+    console.error('Error in pepewl command:', error);
+    await interaction.editReply('An error occurred while processing the command.');
+  }
+}
   // -------------------------------------------------------
   // /leaderboard
   // -------------------------------------------------------
@@ -1051,6 +1228,43 @@ if (interaction.commandName === "snapshot") {
  ********************************************************************/
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isButton()) return;
+  // Handle pepewl confirmation/cancel buttons
+if (interaction.customId === 'confirm_pepewl' || interaction.customId === 'cancel_pepewl') {
+  // Verify admin permission again
+  if (!hasAdminRole(interaction.member)) {
+    await interaction.reply({
+      content: "You don't have permission to use this button.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (interaction.customId === 'cancel_pepewl') {
+    await interaction.update({
+      content: 'Operation cancelled.',
+      components: []
+    });
+    return;
+  }
+
+  // If confirmed, run the command again without simulation
+  await interaction.update({
+    content: 'Starting role assignment...',
+    components: []
+  });
+
+  // Create a new interaction to run the command without simulation
+  const newInteraction = {
+    ...interaction,
+    commandName: 'pepewl',
+    options: {
+      getBoolean: () => false
+    }
+  };
+
+  // Execute the command
+  await client.emit('interactionCreate', newInteraction);
+}
 
   // Leaderboard pagination
   const [action, teamOption, currentPage] = interaction.customId.split("_");
@@ -1153,6 +1367,7 @@ client.on("interactionCreate", async (interaction) => {
     });
   }
 });
+
 
 /********************************************************************
  *                GUILD MEMBER ADD EVENT
